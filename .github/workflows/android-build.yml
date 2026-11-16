@@ -111,6 +111,10 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            if ! keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "$KEYSTORE_PASSWORD"; then
+              echo "::error::keystore secret is truncated or the password is wrong"
+              exit 1
+            fi
             echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
             {
               echo "KEYSTORE_PASSWORD<<EOF_KEYSTORE_PASSWORD"
@@ -154,18 +158,29 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY || secrets.GEMINI_API_KEY }}
         run: |
+          set -o pipefail
+          set +e
+          LOG_FILE="$RUNNER_TEMP/gradle-build.log"
           for attempt in 1 2 3; do
             echo "Gradle build attempt $attempt of 3..."
-            if ./gradlew assembleDebug --no-daemon --max-workers=2 --stacktrace; then
+            ./gradlew assembleDebug --no-daemon --max-workers=2 --stacktrace 2>&1 | tee "$LOG_FILE"
+            EXIT_CODE=$?
+            if [ "$EXIT_CODE" -eq 0 ]; then
               exit 0
             fi
-            if [ "$attempt" -lt 3 ]; then
-              echo "Gradle build failed on attempt $attempt; waiting 60s before retry..."
-              sleep 60
+            if grep -qiE "status code 429|HTTP 429|Too Many Requests|Connection reset|Connection timed out|Read timed out|ConnectException|SocketTimeoutException|UnknownHostException|SSLException|Could not get resource|Could not HEAD|Could not GET|Temporary failure in name resolution|status code 502|status code 503|status code 504" "$LOG_FILE"; then
+              if [ "$attempt" -lt 3 ]; then
+                echo "Transient network or HTTP 429 error detected on attempt $attempt; waiting 60s before retry..."
+                sleep 60
+                continue
+              fi
+              echo "Gradle build failed after 3 attempts due to network or HTTP 429 errors."
+              exit "$EXIT_CODE"
+            else
+              echo "Gradle build failed with non-network error (signing/compile/other); not retrying."
+              exit "$EXIT_CODE"
             fi
           done
-          echo "Gradle build failed after 3 attempts."
-          exit 1
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
