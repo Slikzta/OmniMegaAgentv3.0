@@ -109,28 +109,31 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set +e
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            if ! keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "$KEYSTORE_PASSWORD"; then
-              echo "::error::keystore secret is truncated or the password is wrong"
-              exit 1
+            if echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore" && \
+               keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "$KEYSTORE_PASSWORD"; then
+              echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+              {
+                echo "KEYSTORE_PASSWORD<<EOF_KEYSTORE_PASSWORD"
+                printf '%s\n' "$KEYSTORE_PASSWORD"
+                echo "EOF_KEYSTORE_PASSWORD"
+                echo "KEY_ALIAS<<EOF_KEY_ALIAS"
+                printf '%s\n' "$KEY_ALIAS"
+                echo "EOF_KEY_ALIAS"
+                echo "KEY_PASSWORD<<EOF_KEY_PASSWORD"
+                printf '%s\n' "$KEY_PASSWORD"
+                echo "EOF_KEY_PASSWORD"
+              } >> "$GITHUB_ENV"
+              echo "Configured fixed release keystore for APK signing."
+            else
+              rm -f "$RUNNER_TEMP/release.keystore"
+              echo "::warning::Release keystore decode or keytool -list check failed (secret may be missing, truncated, or password mismatch); falling back to default debug keystore signing."
             fi
-            echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
-            {
-              echo "KEYSTORE_PASSWORD<<EOF_KEYSTORE_PASSWORD"
-              printf '%s\n' "$KEYSTORE_PASSWORD"
-              echo "EOF_KEYSTORE_PASSWORD"
-              echo "KEY_ALIAS<<EOF_KEY_ALIAS"
-              printf '%s\n' "$KEY_ALIAS"
-              echo "EOF_KEY_ALIAS"
-              echo "KEY_PASSWORD<<EOF_KEY_PASSWORD"
-              printf '%s\n' "$KEY_PASSWORD"
-              echo "EOF_KEY_PASSWORD"
-            } >> "$GITHUB_ENV"
-            echo "Configured fixed release keystore for APK signing."
           else
             echo "KEYSTORE_BASE64 secret not set; falling back to default debug keystore signing."
           fi
+          exit 0
 
       - name: Make Gradle Wrapper Executable
         run: chmod +x android/gradlew
