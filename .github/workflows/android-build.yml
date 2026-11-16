@@ -95,6 +95,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
+          cache: 'gradle'
 
       - name: Set up Android SDK, NDK, and CMake
         uses: android-actions/setup-android@v3
