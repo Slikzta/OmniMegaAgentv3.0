@@ -1,0 +1,210 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: 'Space Grotesk', 'Geist Variable', system-ui, sans-serif;
+    --font-display: 'Space Grotesk', 'Geist Variable', system-ui, sans-serif;
+    --font-sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root,
+.dark {
+    --sci-bg: #0A0E14;
+    --sci-surface: #101620;
+    --sci-surface-elevated: #151E2B;
+    --sci-chrome: #C8CDD3;
+    --sci-accent: #00E5FF;
+    --sci-accent-rgb: 0, 229, 255;
+
+    --background: #0A0E14;
+    --foreground: #EDF2F7;
+    --card: #101620;
+    --card-foreground: #EDF2F7;
+    --popover: #111824;
+    --popover-foreground: #EDF2F7;
+    --primary: #00E5FF;
+    --primary-foreground: #071018;
+    --secondary: #17202E;
+    --secondary-foreground: #C8CDD3;
+    --muted: #141C28;
+    --muted-foreground: #9AA4B2;
+    --accent: #182334;
+    --accent-foreground: #EDF2F7;
+    --destructive: #EF4444;
+    --border: rgba(200, 205, 211, 0.14);
+    --input: rgba(200, 205, 211, 0.16);
+    --ring: #00E5FF;
+    --radius: 0.75rem;
+    --sidebar: #0D121A;
+    --sidebar-foreground: #EDF2F7;
+    --sidebar-primary: #00E5FF;
+    --sidebar-primary-foreground: #071018;
+    --sidebar-accent: #151E2B;
+    --sidebar-accent-foreground: #EDF2F7;
+    --sidebar-border: rgba(200, 205, 211, 0.14);
+    --sidebar-ring: #00E5FF;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html, body, #root {
+    height: 100%;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    min-height: 100dvh;
+    height: -webkit-fill-available;
+    height: 100dvh;
+    background-color: var(--sci-bg);
+    color: var(--foreground);
+  }
+  body {
+    @apply bg-[#0A0E14] text-slate-100;
+  }
+  html {
+    @apply font-sans;
+  }
+  h1, h2, h3, h4, .sci-heading, .font-display {
+    font-family: var(--font-heading);
+    letter-spacing: -0.015em;
+  }
+}
+
+/* Unified Dark Sci-Fi Card & Glow Design System */
+.sci-card {
+  background: linear-gradient(160deg, rgba(18, 25, 36, 0.92) 0%, rgba(12, 17, 25, 0.96) 100%);
+  border: 1px solid rgba(200, 205, 211, 0.15);
+  box-shadow:
+    0 12px 32px -12px rgba(0, 0, 0, 0.7),
+    0 0 22px -10px rgba(var(--sci-accent-rgb), 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(14px);
+}
+
+.sci-card-interactive {
+  transition: transform 180ms ease, border-color 240ms ease, box-shadow 240ms ease;
+}
+
+.sci-card-interactive:hover {
+  border-color: rgba(var(--sci-accent-rgb), 0.45);
+  box-shadow:
+    0 16px 36px -12px rgba(0, 0, 0, 0.75),
+    0 0 28px -6px rgba(var(--sci-accent-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.sci-pill {
+  background: rgba(16, 22, 32, 0.85);
+  border: 1px solid rgba(200, 205, 211, 0.18);
+  color: var(--sci-chrome);
+}
+
+.sci-touch-target {
+  min-height: 48px;
+  min-width: 48px;
+}
+
+@keyframes sciOrbIdle {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 28px rgba(var(--sci-accent-rgb), 0.28),
+      0 0 60px rgba(var(--sci-accent-rgb), 0.12),
+      inset 0 0 24px rgba(var(--sci-accent-rgb), 0.16);
+  }
+  50% {
+    transform: scale(1.045);
+    box-shadow:
+      0 0 40px rgba(var(--sci-accent-rgb), 0.44),
+      0 0 85px rgba(var(--sci-accent-rgb), 0.22),
+      inset 0 0 32px rgba(var(--sci-accent-rgb), 0.28);
+  }
+}
+
+@keyframes sciMicListen {
+  0%, 100% {
+    box-shadow:
+      0 0 22px rgba(var(--sci-accent-rgb), 0.38),
+      0 0 54px rgba(var(--sci-accent-rgb), 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 38px rgba(var(--sci-accent-rgb), 0.72),
+      0 0 92px rgba(var(--sci-accent-rgb), 0.34);
+  }
+}
+
+@keyframes sciWaveBar {
+  0%, 100% {
+    transform: scaleY(0.32);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.animate-sci-orb-idle {
+  animation: sciOrbIdle 3.6s ease-in-out infinite;
+}
+
+.animate-sci-mic-listen {
+  animation: sciMicListen 1.8s ease-in-out infinite;
+}
+
+.animate-sci-wave-bar {
+  animation: sciWaveBar 0.85s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
