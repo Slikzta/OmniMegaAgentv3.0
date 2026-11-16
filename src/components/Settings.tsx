@@ -115,7 +115,13 @@ import {
   stopWakeWordListener,
   triggerTestWakeWord,
 } from '../lib/backgroundVoiceService';
+import { Capacitor } from '@capacitor/core';
 import { exportLocalBackupData, importLocalBackupData } from '../lib/chatStore';
+import {
+  exportBackupWithDialog,
+  extractBackupJsonFromBytes,
+  pickNativeBackupFile,
+} from '../lib/backupIo';
 import { stopSpeaking } from '../lib/ttsService';
 import { PersonaVoiceModal } from './PersonaVoiceModal';
 import { LocalVoiceSettingsCard } from './LocalVoiceSettingsCard';
@@ -749,48 +755,64 @@ export default function SettingsView({
     toast.success('Custom companion directives saved!');
   };
 
-  const handleExportBackup = () => {
+  const handleExportBackup = async () => {
     try {
       const jsonStr = exportLocalBackupData();
-      const blob = new Blob([jsonStr], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const dateStr = new Date().toISOString().split('T')[0];
-      a.href = url;
-      a.download = `sierra-backup-${dateStr}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success('Local backup exported as JSON (API keys excluded)!');
+      const outcome = await exportBackupWithDialog(jsonStr);
+      if (outcome.cancelled) {
+        toast.info('Backup export cancelled.');
+        return;
+      }
+      if (outcome.mode === 'shared') {
+        toast.success('Backup shared (API keys excluded)!');
+      } else {
+        toast.success(`Backup saved: ${outcome.savedPath} (API keys excluded)`);
+      }
     } catch (err: any) {
       toast.error(`Export failed: ${err?.message || 'Unknown error'}`);
     }
   };
 
-  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const applyImportedBackupJson = (jsonText: string) => {
+    const result = importLocalBackupData(jsonText);
+    refreshMemorySummaries(settings.activeIdentity);
+    setCustomDirectives(getCustomDirectives());
+    toast.success(
+      `Backup restored (${result.settingsCount} settings, ${result.summariesCount} memory summaries, ${result.chatsCount} chat sessions)!`
+    );
+  };
+
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const text = String(reader.result || '');
-        const result = importLocalBackupData(text);
-        refreshMemorySummaries(settings.activeIdentity);
-        setCustomDirectives(getCustomDirectives());
-        const configsMsg = result.configsCount ? `, ${result.configsCount} voice/persona configs` : '';
-        toast.success(
-          `Backup restored (${result.summariesCount} memory summaries, ${result.sessionsCount} chat sessions${configsMsg})!`
-        );
-      } catch (err: any) {
-        toast.error(`Failed to import backup JSON: ${err?.message || 'Invalid file'}`);
-      } finally {
-        if (backupFileInputRef.current) {
-          backupFileInputRef.current.value = '';
-        }
+    try {
+      const buffer = await file.arrayBuffer();
+      const jsonText = await extractBackupJsonFromBytes(new Uint8Array(buffer), file.name);
+      applyImportedBackupJson(jsonText);
+    } catch (err: any) {
+      toast.error(`Failed to import backup: ${err?.message || 'Invalid backup file'}`);
+    } finally {
+      if (backupFileInputRef.current) {
+        backupFileInputRef.current.value = '';
       }
-    };
-    reader.readAsText(file);
+    }
+  };
+
+  const handleImportBackupClick = async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const picked = await pickNativeBackupFile();
+        if (picked.cancelled) return;
+        if (picked.ok && picked.jsonText) {
+          applyImportedBackupJson(picked.jsonText);
+          return;
+        }
+      } catch (err: any) {
+        toast.error(`Failed to import backup: ${err?.message || 'Invalid backup file'}`);
+        return;
+      }
+    }
+    backupFileInputRef.current?.click();
   };
 
   const handleToggleBackgroundLive = async () => {
@@ -2369,22 +2391,22 @@ export default function SettingsView({
                         </div>
                       </div>
 
-                      {/* JSON Backup Export / Import (Settings stripped of API keys) */}
+                      {/* JSON / ZIP Backup Export & Import (Settings stripped of API keys) */}
                       <div className="p-4 rounded-xl bg-[#0A0E14]/80 border border-[#C8CDD3]/15 flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <div className="text-xs font-display font-bold text-white uppercase tracking-wider flex items-center gap-2">
                             <Sparkles className="w-3.5 h-3.5" style={{ color: accentHex }} />
-                            Local Memory &amp; Settings Backup (JSON)
+                            Local Memory &amp; Settings Backup (JSON / ZIP)
                           </div>
                           <p className="text-[11px] text-[#C8CDD3]/70 mt-1">
-                            Exports v3 settings (with API keys stripped), {summariesCount}/{MAX_CONVERSATION_SUMMARIES} summaries, and chat history.
+                            Exports v3 settings (with API keys stripped), {summariesCount}/{MAX_CONVERSATION_SUMMARIES} summaries, and chat history. Imports .json or .zip.
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
                           <input
                             ref={backupFileInputRef}
                             type="file"
-                            accept=".json,application/json"
+                            accept=".json,.zip,application/json,application/zip,application/x-zip-compressed"
                             onChange={handleImportBackup}
                             className="hidden"
                           />
@@ -2399,7 +2421,7 @@ export default function SettingsView({
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => backupFileInputRef.current?.click()}
+                            onClick={handleImportBackupClick}
                             className="min-h-[40px] border-[#C8CDD3]/25 hover:bg-[#151E2E] text-slate-200 text-xs px-3.5 rounded-xl gap-1.5"
                           >
                             <Upload className="w-3.5 h-3.5 text-cyan-400" /> Import Backup

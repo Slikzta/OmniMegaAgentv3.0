@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DeviceControlPlugin.class);
         registerPlugin(EmailPlugin.class);
         registerPlugin(LocalVoicePlugin.class);
+        registerPlugin(BackupFilePlugin.class);
         super.onCreate(savedInstanceState);
         configureWebViewForBackgroundAudio();
         checkAssistantIntent(getIntent());

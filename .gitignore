@@ -26,3 +26,4 @@ android/build/
 *.jks
 !**/debug.keystore
 !**/debug.keystore.base64
+!android/app/sierra-debug.keystore

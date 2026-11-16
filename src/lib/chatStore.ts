@@ -18,6 +18,7 @@ import {
   updateSettings,
   stripSecretsFromSettingsV3,
 } from './settingsStore';
+import { addDebugLog } from './debugLogStore';
 
 export interface ChatSessionMeta {
   id: string;
@@ -390,15 +391,42 @@ export function exportLocalBackupData(): string {
 /**
  * Imports and restores local on-device conversation summaries, chat history, voice configs, and preferences from a JSON backup string.
  */
-export function importLocalBackupData(jsonText: string): { summariesCount: number; sessionsCount: number; configsCount: number } {
-  const parsed = JSON.parse(jsonText);
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Invalid backup JSON format');
+export function importLocalBackupData(jsonText: string): {
+  summariesCount: number;
+  sessionsCount: number;
+  configsCount: number;
+  settingsCount: number;
+  chatsCount: number;
+} {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new Error('Selected file is not valid JSON.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid backup JSON format.');
+  }
+
+  const hasRecognizedBackupData =
+    Array.isArray(parsed.summaries) ||
+    Array.isArray(parsed.sessions) ||
+    (parsed.messagesBySession && typeof parsed.messagesBySession === 'object' && !Array.isArray(parsed.messagesBySession)) ||
+    (parsed.settingsV3 && typeof parsed.settingsV3 === 'object' && !Array.isArray(parsed.settingsV3)) ||
+    (parsed.unifiedSettings && typeof parsed.unifiedSettings === 'object' && !Array.isArray(parsed.unifiedSettings)) ||
+    (parsed.preferences && typeof parsed.preferences === 'object' && !Array.isArray(parsed.preferences)) ||
+    (parsed.liveVoiceConfigs && typeof parsed.liveVoiceConfigs === 'object' && !Array.isArray(parsed.liveVoiceConfigs)) ||
+    (parsed.chatVoiceConfigs && typeof parsed.chatVoiceConfigs === 'object' && !Array.isArray(parsed.chatVoiceConfigs)) ||
+    (typeof parsed.version === 'number' && typeof parsed.exportedAt === 'string');
+
+  if (!hasRecognizedBackupData) {
+    throw new Error('This file is not a valid Omni backup (missing backup data fields).');
   }
 
   let summariesCount = 0;
   let sessionsCount = 0;
   let configsCount = 0;
+  let restoredMessageSessionCount = 0;
 
   if (typeof localStorage !== 'undefined') {
     if (Array.isArray(parsed.summaries)) {
@@ -437,6 +465,7 @@ export function importLocalBackupData(jsonText: string): { summariesCount: numbe
       for (const [sid, msgs] of Object.entries(parsed.messagesBySession)) {
         if (Array.isArray(msgs)) {
           localStorage.setItem(`${STORAGE_KEY_PREFIX_MSGS}${sid}`, JSON.stringify(msgs));
+          restoredMessageSessionCount++;
         }
       }
     }
@@ -650,6 +679,12 @@ export function importLocalBackupData(jsonText: string): { summariesCount: numbe
     }
   }
 
+  const settingsCount = configsCount;
+  const chatsCount = sessionsCount || restoredMessageSessionCount;
+  addDebugLog(
+    'Import:Result',
+    `[Import:Result] settings=${settingsCount} summaries=${summariesCount} chats=${chatsCount}`,
+  );
   notifyListeners();
-  return { summariesCount, sessionsCount, configsCount };
+  return { summariesCount, sessionsCount, configsCount, settingsCount, chatsCount };
 }

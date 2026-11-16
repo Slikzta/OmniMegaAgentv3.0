@@ -150,21 +150,16 @@ test("Persistent Debug Signing Configuration in Android Gradle Build", async () 
   const gradleBuild = fs.readFileSync("android/app/build.gradle", "utf-8");
 
   assert.ok(gradleBuild.includes("signingConfigs"), "build.gradle must configure signingConfigs");
-  assert.ok(gradleBuild.includes("storeFile file('debug.keystore')"), "build.gradle must specify fixed debug.keystore storeFile");
-  assert.ok(gradleBuild.includes("keyAlias 'androiddebugkey'"), "build.gradle must specify consistent androiddebugkey keyAlias");
-  assert.ok(gradleBuild.includes("storePassword 'android'"), "build.gradle must specify storePassword");
-  assert.ok(gradleBuild.includes("keyPassword 'android'"), "build.gradle must specify keyPassword");
-  assert.ok(gradleBuild.includes("signingConfig signingConfigs.debug"), "buildTypes.debug must use signingConfigs.debug");
+  assert.ok(gradleBuild.includes('storeFile file("sierra-debug.keystore")'), "build.gradle must specify fixed sierra-debug.keystore storeFile");
+  assert.ok(gradleBuild.includes('keyAlias "androiddebugkey"'), "build.gradle must specify consistent androiddebugkey keyAlias");
+  assert.ok(gradleBuild.includes('storePassword "android"'), "build.gradle must specify storePassword");
+  assert.ok(gradleBuild.includes('keyPassword "android"'), "build.gradle must specify keyPassword");
+  assert.ok(gradleBuild.includes("signingConfig signingConfigs.debug"), "buildTypes must use signingConfigs.debug");
 
-  const keystoreExists = fs.existsSync("android/app/debug.keystore");
-  const base64Exists = fs.existsSync("android/app/debug.keystore.base64");
-  assert.ok(
-    keystoreExists || base64Exists,
-    "Either android/app/debug.keystore or android/app/debug.keystore.base64 must exist on disk"
-  );
-  const targetPath = keystoreExists ? "android/app/debug.keystore" : "android/app/debug.keystore.base64";
-  const stats = fs.statSync(targetPath);
-  assert.ok(stats.size > 0, `${targetPath} must not be empty`);
+  const keystorePath = "android/app/sierra-debug.keystore";
+  assert.ok(fs.existsSync(keystorePath), `${keystorePath} must exist on disk`);
+  const stats = fs.statSync(keystorePath);
+  assert.ok(stats.size > 0, `${keystorePath} must not be empty`);
 });
 
 test("Voice Debug Log Export and Formatting Pipeline", async () => {
