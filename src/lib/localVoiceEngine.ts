@@ -2196,10 +2196,15 @@ export interface SierraLocalVoicePluginInterface {
     activeTtsEngine?: LocalTtsEngineId;
     reason?: string;
   }>;
+  prepareAudioRoute?(options: {
+    routeMode: 'media' | 'communication';
+    source?: string;
+  }): Promise<{ ok: boolean; mode: string; device: string; usage: string; reason?: string }>;
   playPcmAudio?(options: {
     pcmBase64: string;
     sampleRate?: number;
     turnId?: number;
+    routeMode?: 'media' | 'communication';
   }): Promise<{ ok: boolean; interrupted?: boolean; reason?: string }>;
   isHeadsetConnected?(): Promise<{ connected: boolean; deviceType?: string }>;
   stopAudioPlayback(): Promise<{ ok: boolean }>;
@@ -2298,6 +2303,14 @@ export function getSierraLocalVoicePlugin(): SierraLocalVoicePluginInterface {
     async synthesizePiperSentence() {
       return { ok: false, activeTtsEngine: 'android_tts', reason: 'Piper ONNX requires Android runtime.' };
     },
+    async prepareAudioRoute({ routeMode }) {
+      return {
+        ok: true,
+        mode: routeMode === 'communication' ? 'MODE_IN_COMMUNICATION' : 'MODE_NORMAL',
+        device: routeMode === 'communication' ? 'COMMUNICATION' : 'WEB_MEDIA_OUTPUT',
+        usage: routeMode === 'communication' ? 'USAGE_VOICE_COMMUNICATION' : 'USAGE_MEDIA',
+      };
+    },
     async playPcmAudio() {
       return { ok: false, reason: 'Native AudioTrack playback requires Android runtime.' };
     },
@@ -2356,4 +2369,32 @@ export async function ensureNativeLocalMicPermission(
       reason: err?.message || String(err) || 'Failed to verify microphone permission.',
     };
   }
+}
+
+export async function prepareNativeAudioRoute(
+  routeMode: 'media' | 'communication',
+  source: string = 'tts',
+): Promise<{ ok: boolean; mode: string; device: string; usage: string }> {
+  const defaultMode = routeMode === 'communication' ? 'MODE_IN_COMMUNICATION' : 'MODE_NORMAL';
+  const defaultUsage = routeMode === 'communication' ? 'USAGE_VOICE_COMMUNICATION' : 'USAGE_MEDIA';
+  try {
+    const plugin = getSierraLocalVoicePlugin();
+    if (typeof plugin.prepareAudioRoute === 'function') {
+      const res = await plugin.prepareAudioRoute({ routeMode, source });
+      return {
+        ok: Boolean(res?.ok ?? true),
+        mode: res?.mode || defaultMode,
+        device: res?.device || (Capacitor.isNativePlatform() ? 'BUILTIN_SPEAKER' : 'WEB_MEDIA_OUTPUT'),
+        usage: res?.usage || defaultUsage,
+      };
+    }
+  } catch {
+    // Fall through cleanly
+  }
+  return {
+    ok: true,
+    mode: defaultMode,
+    device: Capacitor.isNativePlatform() ? 'BUILTIN_SPEAKER' : 'WEB_MEDIA_OUTPUT',
+    usage: defaultUsage,
+  };
 }

@@ -5,6 +5,9 @@ import {
   testProviderConnection,
   getResponseSpeed,
   setResponseSpeed,
+  isOllamaAvailable,
+  isOllamaNonLocalhostUrl,
+  probeOllamaEndpoint,
   PROVIDER_METADATA,
   PROVIDER_CONTENT_CAPABILITIES,
   type ProvidersConfigResponse,
@@ -305,6 +308,21 @@ export default function SettingsView({
   const [debugUtterances, setDebugUtterances] = useState<DebugUtteranceEntry[]>([]);
   const [playingUtteranceId, setPlayingUtteranceId] = useState<string | null>(null);
   const debugUtteranceAudioRef = React.useRef<HTMLAudioElement | null>(null);
+  const [, setOllamaProbeVersion] = useState(0);
+
+  useEffect(() => {
+    const ollamaEndpoint = settings.providers.ollama?.httpEndpoint;
+    if (!isOllamaNonLocalhostUrl(ollamaEndpoint)) return;
+    let active = true;
+    probeOllamaEndpoint(ollamaEndpoint)
+      .then(() => {
+        if (active) setOllamaProbeVersion((v) => v + 1);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [settings.providers.ollama?.httpEndpoint]);
 
   const loadDebugUtterances = async () => {
     try {
@@ -886,8 +904,9 @@ export default function SettingsView({
     reader.readAsText(file);
   };
 
+  const ollamaAvailable = isOllamaAvailable(settings.providers.ollama?.httpEndpoint);
   const activeEngineHasSavedKey =
-    activeChatProvider === 'ollama' ||
+    (activeChatProvider === 'ollama' && ollamaAvailable) ||
     activeChatProvider === 'local' ||
     Boolean(trimAndNormalizeApiKey(settings.providers[activeChatProvider]?.apiKey)) ||
     Boolean(config?.providers[activeChatProvider]?.hasKey);
@@ -1062,6 +1081,7 @@ export default function SettingsView({
                         const cleanedKey = trimAndNormalizeApiKey(stored?.apiKey);
                         const hasKey = Boolean(cleanedKey) || Boolean(config?.providers?.[pid]?.hasKey);
                         const isEnabled = stored?.enabled !== false;
+                        const isOllamaReady = pid === 'ollama' ? isOllamaAvailable(stored?.httpEndpoint || defEp.httpEndpoint) : true;
 
                         return (
                           <div
@@ -1088,9 +1108,13 @@ export default function SettingsView({
                                     backgroundColor:
                                       !isEnabled
                                         ? '#64748b'
-                                        : !defEp.requiresApiKey || hasKey
-                                          ? '#34d399'
-                                          : '#f59e0b',
+                                        : pid === 'ollama'
+                                          ? isOllamaReady
+                                            ? '#34d399'
+                                            : '#f59e0b'
+                                          : !defEp.requiresApiKey || hasKey
+                                            ? '#34d399'
+                                            : '#f59e0b',
                                   }}
                                 />
                                 <div className="min-w-0">
@@ -1117,11 +1141,13 @@ export default function SettingsView({
                                   <div className="text-[11px] font-mono text-[#C8CDD3]/65 truncate">
                                     {pid === 'local'
                                       ? 'On-device GGUF LLM + Whisper STT + Piper/Android TTS'
-                                      : defEp.requiresApiKey
-                                        ? hasKey
-                                          ? `Key …${cleanedKey.slice(-4) || 'saved'} • ${stored?.httpEndpoint || defEp.httpEndpoint}`
-                                          : `No key set • ${stored?.httpEndpoint || defEp.httpEndpoint}`
-                                        : stored?.httpEndpoint || defEp.httpEndpoint}
+                                      : pid === 'ollama' && !isOllamaReady
+                                        ? `Unavailable — configure reachable non-localhost URL (${stored?.httpEndpoint || defEp.httpEndpoint})`
+                                        : defEp.requiresApiKey
+                                          ? hasKey
+                                            ? `Key …${cleanedKey.slice(-4) || 'saved'} • ${stored?.httpEndpoint || defEp.httpEndpoint}`
+                                            : `No key set • ${stored?.httpEndpoint || defEp.httpEndpoint}`
+                                          : stored?.httpEndpoint || defEp.httpEndpoint}
                                   </div>
                                 </div>
                               </button>
@@ -1448,7 +1474,9 @@ export default function SettingsView({
                             >
                               {ALL_PROVIDER_IDS.map((pid) => (
                                 <option key={pid} value={pid}>
-                                  {PROVIDER_METADATA[pid]?.name || pid}
+                                  {pid === 'ollama' && !ollamaAvailable
+                                    ? `${PROVIDER_METADATA[pid]?.name || pid} (Unavailable)`
+                                    : PROVIDER_METADATA[pid]?.name || pid}
                                 </option>
                               ))}
                             </select>

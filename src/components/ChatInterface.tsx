@@ -4,6 +4,7 @@ import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, u
 import { MODELS } from '../lib/gemini';
 import {
   doesModelSupportMapsGrounding,
+  doesModelSupportSearchGrounding,
   logQuotaOrRateLimitError,
   getEffectiveTextModel,
 } from '../config/models';
@@ -1197,9 +1198,13 @@ export default function ChatInterface({
             temperature,
             topP,
             topK,
-            useSearch,
+            ...(doesModelSupportSearchGrounding(effectiveChatModel, activeProvider)
+              ? { useSearch }
+              : {}),
             useMaps,
-            responseSpeed,
+            ...(doesModelSupportResponseSpeed(effectiveChatModel, activeProvider)
+              ? { responseSpeed }
+              : {}),
           },
           {
             onChunk: (chunkText) => {
@@ -1910,13 +1915,23 @@ export default function ChatInterface({
                         </button>
                       </div>
 
-                      <div className="flex items-center justify-between px-3 min-h-[48px] rounded-xl bg-[#101620] border border-[#C8CDD3]/15">
-                        <div className="flex items-center gap-2 text-xs text-[#C8CDD3]">
-                          <Search className={cn('w-4 h-4', useSearch ? 'text-cyan-400' : 'text-[#C8CDD3]/50')} />
-                          <span>Web Search Grounding</span>
+                      {doesModelSupportSearchGrounding(selectedModelId, activeProvider) ? (
+                        <div className="flex items-center justify-between px-3 min-h-[48px] rounded-xl bg-[#101620] border border-[#C8CDD3]/15">
+                          <div className="flex items-center gap-2 text-xs text-[#C8CDD3]">
+                            <Search className={cn('w-4 h-4', useSearch ? 'text-cyan-400' : 'text-[#C8CDD3]/50')} />
+                            <span>Web Search Grounding</span>
+                          </div>
+                          <Switch checked={useSearch} onCheckedChange={setUseSearch} />
                         </div>
-                        <Switch checked={useSearch} onCheckedChange={setUseSearch} />
-                      </div>
+                      ) : (
+                        <div
+                          data-testid="chat-search-grounding-unsupported"
+                          className="flex items-center gap-2 px-3 min-h-[44px] rounded-xl bg-[#101620]/60 border border-[#C8CDD3]/10 text-[11px] text-[#C8CDD3]/55"
+                        >
+                          <Search className="w-3.5 h-3.5" />
+                          <span>Web Search grounding unavailable for model</span>
+                        </div>
+                      )}
 
                       {doesModelSupportMapsGrounding(selectedModelId, activeProvider) ? (
                         <div

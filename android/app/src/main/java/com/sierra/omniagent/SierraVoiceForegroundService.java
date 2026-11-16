@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
@@ -110,6 +111,7 @@ public class SierraVoiceForegroundService extends Service {
             isLiveBackgroundActive.set(false);
             isWakeWordActive.set(false);
             stopNativeAudioInternal();
+            resetAudioRoutingToNormal();
             releaseLocks();
             if (wasFromNotification) {
                 SierraBackgroundVoicePlugin.notifyStoppedFromNotification();
@@ -122,6 +124,7 @@ public class SierraVoiceForegroundService extends Service {
         if (ACTION_STOP_LIVE.equals(action)) {
             isLiveBackgroundActive.set(false);
             stopNativeAudioInternal();
+            resetAudioRoutingToNormal();
             if (!isWakeWordActive.get()) {
                 releaseLocks();
                 stopForegroundCompat();
@@ -137,6 +140,7 @@ public class SierraVoiceForegroundService extends Service {
             isWakeWordActive.set(false);
             if (!isLiveBackgroundActive.get()) {
                 stopNativeAudioInternal();
+                resetAudioRoutingToNormal();
                 releaseLocks();
                 stopForegroundCompat();
                 stopSelf();
@@ -160,6 +164,9 @@ public class SierraVoiceForegroundService extends Service {
 
         if (ACTION_START_WAKE_WORD.equals(action)) {
             isWakeWordActive.set(true);
+            if (!isLiveBackgroundActive.get()) {
+                resetAudioRoutingToNormal();
+            }
             acquireLocks();
             startOrUpdateForeground();
             return START_STICKY;
@@ -175,6 +182,7 @@ public class SierraVoiceForegroundService extends Service {
 
         if (ACTION_STOP_NATIVE_AUDIO.equals(action)) {
             stopNativeAudioInternal();
+            resetAudioRoutingToNormal();
             return START_STICKY;
         }
 
@@ -419,6 +427,22 @@ public class SierraVoiceForegroundService extends Service {
                 audioTrack = null;
             }
         }
+        resetAudioRoutingToNormal();
+    }
+
+    private void resetAudioRoutingToNormal() {
+        try {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    am.clearCommunicationDevice();
+                }
+                am.setSpeakerphoneOn(false);
+                am.setMode(AudioManager.MODE_NORMAL);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to reset audio routing to MODE_NORMAL", t);
+        }
     }
 
     public void playPcm24kBase64(final String base64Audio) {
@@ -490,6 +514,7 @@ public class SierraVoiceForegroundService extends Service {
         isLiveBackgroundActive.set(false);
         isWakeWordActive.set(false);
         stopNativeAudioInternal();
+        resetAudioRoutingToNormal();
         releaseLocks();
         if (playbackExecutor != null) {
             playbackExecutor.shutdownNow();

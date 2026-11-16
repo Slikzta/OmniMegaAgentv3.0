@@ -27,6 +27,7 @@ import {
   logQuotaOrRateLimitError,
   isQuotaOrRateLimitError,
   doesModelSupportMapsGrounding,
+  doesModelSupportSearchGrounding,
 } from '../config/models';
 import { getAllSierraFunctionDeclarations, executeSierraToolCall } from './toolRouter';
 import {
@@ -97,6 +98,89 @@ export function formatOllamaConnectionError(err: unknown): string {
     return OLLAMA_UNREACHABLE_MESSAGE;
   }
   return err instanceof Error ? err.message : String(err || OLLAMA_UNREACHABLE_MESSAGE);
+}
+
+const LOCALHOST_OLLAMA_HOSTS = new Set([
+  '',
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '[::1]',
+  '0.0.0.0',
+  '10.0.2.2',
+]);
+
+export function isOllamaNonLocalhostUrl(url?: string): boolean {
+  const raw = (url || '').trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const host = (parsed.hostname || '').trim().toLowerCase();
+    return !LOCALHOST_OLLAMA_HOSTS.has(host);
+  } catch {
+    return false;
+  }
+}
+
+const ollamaReachabilityCache = new Map<string, boolean>();
+
+export function recordOllamaEndpointReachability(endpoint: string | undefined, reachable: boolean): void {
+  const normalized = (endpoint || '').trim().replace(/\/+$/, '').toLowerCase();
+  if (!normalized) return;
+  ollamaReachabilityCache.set(normalized, reachable);
+}
+
+export function getOllamaEndpointReachability(endpoint?: string): boolean | undefined {
+  const normalized = (endpoint !== undefined ? endpoint : getProviderHttpEndpoint('ollama') || '')
+    .trim()
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  if (!normalized) return undefined;
+  return ollamaReachabilityCache.get(normalized);
+}
+
+export function isOllamaAvailable(endpoint?: string): boolean {
+  const effectiveUrl =
+    (endpoint !== undefined ? endpoint : getProviderHttpEndpoint('ollama')) || '';
+  if (!isOllamaNonLocalhostUrl(effectiveUrl)) {
+    return false;
+  }
+  const normalized = effectiveUrl.trim().replace(/\/+$/, '').toLowerCase();
+  const cached = ollamaReachabilityCache.get(normalized);
+  return cached !== false;
+}
+
+export async function probeOllamaEndpoint(endpoint?: string, timeoutMs = 2500): Promise<boolean> {
+  const effectiveUrl = (
+    endpoint !== undefined ? endpoint : getProviderHttpEndpoint('ollama') || ''
+  )
+    .trim()
+    .replace(/\/+$/, '');
+  if (!isOllamaNonLocalhostUrl(effectiveUrl)) {
+    return false;
+  }
+  if (typeof fetch !== 'function') {
+    return false;
+  }
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const resp = await fetch(`${effectiveUrl}/api/tags`, {
+      method: 'GET',
+      signal: controller?.signal,
+    });
+    const ok = resp.ok;
+    recordOllamaEndpointReachability(effectiveUrl, ok);
+    return ok;
+  } catch {
+    recordOllamaEndpointReachability(effectiveUrl, false);
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -909,6 +993,24 @@ export interface TestConnectionResult {
   error?: string;
 }
 
+function logProviderTestOutcome(
+  pid: string,
+  model: string | undefined,
+  res: TestConnectionResult,
+): TestConnectionResult {
+  const statusLabel =
+    res.status !== undefined ? `HTTP ${res.status}` : res.success ? 'OK' : 'ERR';
+  const detail = res.success
+    ? `message="${res.message || 'Connected'}"`
+    : `error="${res.error || 'Connection failed'}"`;
+  const modelPart = model ? ` model=${model}` : '';
+  addDebugLog(
+    'ProviderTest:Result',
+    `[ProviderTest] provider=${pid}${modelPart} result=${res.success ? 'PASS' : 'FAIL'} status=${statusLabel} latency=${res.latencyMs ?? 0}ms ${detail}`,
+  );
+  return res;
+}
+
 export async function testProviderConnection(data: {
   providerId: string;
   apiKey?: string;
@@ -938,50 +1040,54 @@ export async function testProviderConnection(data: {
   const baseWs = (data.wsEndpoint || data.liveWsUrl || getProviderWsEndpoint(pid)).trim();
 
   if (pid === 'local') {
-    return {
+    return logProviderTestOutcome(pid, data.model, {
       success: true,
       status: 200,
       latencyMs: Date.now() - startTime,
       message: 'HTTP 200: On-device local runtime ready.',
-    };
+    });
   }
 
   // Gemini Live WebSocket handshake check when testing a Live voice model explicitly
   if (pid === 'gemini' && data.model && isGeminiLiveModel(data.model)) {
     if (!effectiveKey) {
-      return {
+      return logProviderTestOutcome(pid, data.model, {
         success: false,
         status: 401,
         error: 'Gemini API key is required. Paste your key in Settings -> Providers.',
-      };
+      });
     }
     const hasExplicitLevel = 'thinkingLevel' in data;
-    return await testGeminiLiveWebSocket({
+    const liveRes = await testGeminiLiveWebSocket({
       apiKey: effectiveKey,
       model: data.model,
       liveWsUrl: baseWs || undefined,
       ...(hasExplicitLevel ? { thinkingLevel: data.thinkingLevel } : {}),
     });
+    return logProviderTestOutcome(pid, data.model, liveRes);
   }
 
   const httpCheck = validateHttpEndpoint(baseHttp, false);
   if (!httpCheck.valid) {
-    return {
+    if (pid === 'ollama') {
+      recordOllamaEndpointReachability(baseHttp, false);
+    }
+    return logProviderTestOutcome(pid, data.model, {
       success: false,
       latencyMs: 0,
       error: httpCheck.error || 'Invalid HTTP endpoint URL.',
-    };
+    });
   }
 
   try {
     if (pid === 'openrouter') {
       if (!effectiveKey) {
-        return {
+        return logProviderTestOutcome(pid, data.model, {
           success: false,
           status: 401,
           latencyMs: Date.now() - startTime,
           error: 'OpenRouter API key is required before testing connection.',
-        };
+        });
       }
       const url = `${httpCheck.normalized}/auth/key`;
       addDebugLog('ProviderTest:OpenRouter', `GET ${url} (keyLast4=${effectiveKey.slice(-4)})`);
@@ -1001,7 +1107,7 @@ export async function testProviderConnection(data: {
 
       if (!res.ok) {
         const msg = parsed?.error?.message || bodyText.slice(0, 140) || `HTTP ${res.status}`;
-        return {
+        return logProviderTestOutcome(pid, data.model, {
           success: false,
           status: res.status,
           latencyMs,
@@ -1009,25 +1115,25 @@ export async function testProviderConnection(data: {
             res.status === 401
               ? `HTTP 401: Invalid or unrecognized API key for OpenRouter (${msg})`
               : `HTTP ${res.status}: ${msg}`,
-        };
+        });
       }
       const label = parsed?.data?.label ? ` (${parsed.data.label})` : '';
-      return {
+      return logProviderTestOutcome(pid, data.model, {
         success: true,
         status: res.status,
         latencyMs,
         message: `HTTP ${res.status}: OpenRouter key verified${label}.`,
-      };
+      });
     }
 
     if (pid === 'gemini') {
       if (!effectiveKey) {
-        return {
+        return logProviderTestOutcome(pid, data.model, {
           success: false,
           status: 401,
           latencyMs: Date.now() - startTime,
           error: 'Gemini API key is required before testing connection.',
-        };
+        });
       }
       const url = `${httpCheck.normalized}/models?key=${encodeURIComponent(effectiveKey)}`;
       addDebugLog('ProviderTest:Gemini', `GET ${httpCheck.normalized}/models (keyLast4=${effectiveKey.slice(-4)})`);
@@ -1043,7 +1149,7 @@ export async function testProviderConnection(data: {
       } catch {}
       if (!res.ok) {
         const msg = parsed?.error?.message || bodyText.slice(0, 140) || `HTTP ${res.status}`;
-        return {
+        return logProviderTestOutcome(pid, data.model, {
           success: false,
           status: res.status,
           latencyMs,
@@ -1051,25 +1157,25 @@ export async function testProviderConnection(data: {
             res.status === 401
               ? `HTTP 401: Invalid or unrecognized API key for Google Gemini (${msg})`
               : `HTTP ${res.status}: ${msg}`,
-        };
+        });
       }
       const count = Array.isArray(parsed?.models) ? parsed.models.length : 0;
-      return {
+      return logProviderTestOutcome(pid, data.model, {
         success: true,
         status: res.status,
         latencyMs,
         message: `HTTP ${res.status}: Google Gemini connected${count ? ` (${count} models)` : ''}.`,
-      };
+      });
     }
 
     if (pid === 'openai' || pid === 'custom' || pid === 'anthropic') {
       if (pid !== 'custom' && !effectiveKey) {
-        return {
+        return logProviderTestOutcome(pid, data.model, {
           success: false,
           status: 401,
           latencyMs: Date.now() - startTime,
           error: `${PROVIDER_METADATA[pid]?.name || pid} API key is required before testing connection.`,
-        };
+        });
       }
       const url =
         pid === 'anthropic'
@@ -1094,7 +1200,7 @@ export async function testProviderConnection(data: {
       } catch {}
       if (!res.ok) {
         const msg = parsed?.error?.message || bodyText.slice(0, 140) || `HTTP ${res.status}`;
-        return {
+        return logProviderTestOutcome(pid, data.model, {
           success: false,
           status: res.status,
           latencyMs,
@@ -1102,15 +1208,15 @@ export async function testProviderConnection(data: {
             res.status === 401
               ? `HTTP 401: Invalid or unrecognized API key for ${PROVIDER_METADATA[pid]?.name || pid} (${msg})`
               : `HTTP ${res.status}: ${msg}`,
-        };
+        });
       }
       const count = Array.isArray(parsed?.data) ? parsed.data.length : 0;
-      return {
+      return logProviderTestOutcome(pid, data.model, {
         success: true,
         status: res.status,
         latencyMs,
         message: `HTTP ${res.status}: ${PROVIDER_METADATA[pid]?.name || pid} connected${count ? ` (${count} models)` : ''}.`,
-      };
+      });
     }
 
     if (pid === 'ollama') {
@@ -1124,35 +1230,40 @@ export async function testProviderConnection(data: {
         parsed = bodyText ? JSON.parse(bodyText) : null;
       } catch {}
       if (!res.ok) {
+        recordOllamaEndpointReachability(httpCheck.normalized, false);
         const msg = parsed?.error || bodyText.slice(0, 140) || `HTTP ${res.status}`;
-        return {
+        return logProviderTestOutcome(pid, data.model, {
           success: false,
           status: res.status,
           latencyMs,
           error: `HTTP ${res.status}: ${msg}`,
-        };
+        });
       }
+      recordOllamaEndpointReachability(httpCheck.normalized, isOllamaNonLocalhostUrl(httpCheck.normalized));
       const count = Array.isArray(parsed?.models) ? parsed.models.length : 0;
-      return {
+      return logProviderTestOutcome(pid, data.model, {
         success: true,
         status: res.status,
         latencyMs,
         message: `HTTP ${res.status}: Ollama reachable (${count} local models).`,
-      };
+      });
     }
 
-    return {
+    return logProviderTestOutcome(pid, data.model, {
       success: false,
       status: 400,
       latencyMs: Date.now() - startTime,
       error: `Unsupported provider: ${pid}`,
-    };
+    });
   } catch (err: any) {
-    return {
+    if (pid === 'ollama') {
+      recordOllamaEndpointReachability(httpCheck.normalized, false);
+    }
+    return logProviderTestOutcome(pid, data.model, {
       success: false,
       latencyMs: Date.now() - startTime,
       error: err?.message || 'Network connection error',
-    };
+    });
   }
 }
 
@@ -1172,6 +1283,22 @@ export interface StreamChatParams {
   useSearch?: boolean;
   useMaps?: boolean;
   responseSpeed?: ResponseSpeedLevel;
+}
+
+const loggedUnsupportedCapabilities = new Set<string>();
+
+function logUnsupportedCapabilityOnce(
+  provider: string,
+  model: string,
+  capability: 'useSearch' | 'responseSpeed',
+): void {
+  const key = `${capability}:${provider}:${model}`;
+  if (loggedUnsupportedCapabilities.has(key)) return;
+  loggedUnsupportedCapabilities.add(key);
+  addDebugLog(
+    'Chat:Capability',
+    `provider=${provider}, model=${model}, ${capability} supported=false (not sent)`,
+  );
 }
 
 export async function streamChat(
@@ -1245,20 +1372,46 @@ export async function streamChat(
     (effectiveProvider === currentSettings.models.chatProvider && currentSettings.models.chatText
       ? currentSettings.models.chatText
       : getSelectedModelForProvider(effectiveProvider));
-  const effectiveResponseSpeed = params.responseSpeed || getResponseSpeed();
   const supportedSpeed = doesModelSupportResponseSpeed(effectiveModel, effectiveProvider);
-  const thinkingParams = buildModelThinkingConfig(effectiveModel, effectiveProvider, effectiveResponseSpeed);
+  const supportedSearch = doesModelSupportSearchGrounding(effectiveModel, effectiveProvider);
+  const requestedResponseSpeed = params.responseSpeed || getResponseSpeed();
+  const effectiveResponseSpeed = supportedSpeed ? requestedResponseSpeed : undefined;
+  if (!supportedSpeed) {
+    logUnsupportedCapabilityOnce(effectiveProvider, effectiveModel, 'responseSpeed');
+  }
+  if (!supportedSearch) {
+    logUnsupportedCapabilityOnce(effectiveProvider, effectiveModel, 'useSearch');
+  }
+  const thinkingParams =
+    supportedSpeed && effectiveResponseSpeed
+      ? buildModelThinkingConfig(effectiveModel, effectiveProvider, effectiveResponseSpeed)
+      : {};
 
-  const reqLogMsg = `provider=${effectiveProvider}, model=${effectiveModel}, responseSpeed=${effectiveResponseSpeed} (supported=${supportedSpeed}), useSearch=${Boolean(params.useSearch)}, useMaps=${Boolean(params.useMaps)}`;
+  const reqParts = [
+    `provider=${effectiveProvider}`,
+    `model=${effectiveModel}`,
+    ...(supportedSpeed ? [`responseSpeed=${effectiveResponseSpeed}`] : []),
+    ...(supportedSearch ? [`useSearch=${Boolean(params.useSearch)}`] : []),
+    `useMaps=${Boolean(params.useMaps)}`,
+  ];
+  const reqLogMsg = reqParts.join(', ');
   addDebugLog('Chat:Request', reqLogMsg);
   console.log(`[Chat:Request] ${reqLogMsg}`);
 
-  params = {
+  const nextParams: StreamChatParams = {
     ...params,
     provider: effectiveProvider,
     model: effectiveModel,
-    responseSpeed: effectiveResponseSpeed,
   };
+  if (supportedSpeed && effectiveResponseSpeed) {
+    nextParams.responseSpeed = effectiveResponseSpeed;
+  } else {
+    delete nextParams.responseSpeed;
+  }
+  if (!supportedSearch) {
+    delete nextParams.useSearch;
+  }
+  params = nextParams;
 
   // Direct client-side OpenRouter text chat (works on both native Android and web, reusing the existing OpenRouter key)
   if (effectiveProvider === 'openrouter') {
@@ -1449,6 +1602,9 @@ export async function streamChat(
       );
 
       const tools: any[] = [];
+      if (params.useSearch && !doesModelSupportSearchGrounding(model, 'gemini')) {
+        params.useSearch = false;
+      }
       if (params.useSearch) tools.push({ googleSearch: {} });
       if (params.useMaps && !doesModelSupportMapsGrounding(model, 'gemini')) {
         params.useMaps = false;
@@ -1990,6 +2146,7 @@ export async function streamChat(
         } catch (err: any) {
           if (err.name !== 'AbortError') {
             if (isOllamaUnreachableFetchError(err)) {
+              recordOllamaEndpointReachability(baseUrl, false);
               const fallback = resolveFallbackDefaultChatProvider();
               addDebugLog(
                 'Chat:OllamaFallback',

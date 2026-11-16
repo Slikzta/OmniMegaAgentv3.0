@@ -14,6 +14,9 @@ import {
   PROVIDER_METADATA,
   getProvidersConfig,
   getSelectedModelForProvider,
+  isOllamaAvailable,
+  isOllamaNonLocalhostUrl,
+  probeOllamaEndpoint,
 } from '../lib/providers';
 import {
   OPENROUTER_DEFAULT_PAID_MODEL,
@@ -42,6 +45,7 @@ export default function HomeView({ onNavigateTab }: HomeViewProps) {
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine !== false
   );
+  const [, setOllamaProbeVersion] = useState(0);
   const swipeStartXRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -100,8 +104,24 @@ export default function HomeView({ onNavigateTab }: HomeViewProps) {
   const activeEngineLabel = `${chatEngineName} · Live: ${liveEngineShort}`;
   const activeModelLabel = `Chat: ${formatShortModelDisplayName(chatModel)} · Voice: ${liveModelDisplay}`;
 
+  useEffect(() => {
+    const endpoint = settings.providers.ollama?.httpEndpoint;
+    if (settings.models.chatProvider !== 'ollama' || !isOllamaNonLocalhostUrl(endpoint)) {
+      return;
+    }
+    let active = true;
+    probeOllamaEndpoint(endpoint)
+      .then(() => {
+        if (active) setOllamaProbeVersion((v) => v + 1);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [settings.models.chatProvider, settings.providers.ollama?.httpEndpoint]);
+
   const hasChatCreds =
-    chatProv === 'ollama' ||
+    (chatProv === 'ollama' && isOllamaAvailable(settings.providers.ollama?.httpEndpoint)) ||
     chatProv === 'local' ||
     Boolean(trimAndNormalizeApiKey(settings.providers[chatProv]?.apiKey)) ||
     (chatProv === 'openrouter' && Boolean(getOpenRouterApiKey())) ||

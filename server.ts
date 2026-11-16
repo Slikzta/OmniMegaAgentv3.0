@@ -14,6 +14,8 @@ import {
   DEFAULT_TEXT_MODEL,
   resolveFallbackApiModelId,
   doesModelSupportMapsGrounding,
+  doesModelSupportSearchGrounding,
+  doesModelSupportResponseSpeedConfig,
 } from "./src/config/models";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -400,7 +402,7 @@ async function startServer() {
       topK = 40,
       useSearch = false,
       useMaps = false,
-      responseSpeed = "medium",
+      responseSpeed,
       functionDeclarations = [],
     } = req.body;
 
@@ -409,8 +411,15 @@ async function startServer() {
     const effectiveModel = model || providerConfig.customModel || providerConfig.selectedModel || DEFAULT_TEXT_MODEL;
     const effectiveKey = providerConfig.apiKey || (activeProviderId === "gemini" ? process.env.GEMINI_API_KEY : "");
     const effectiveBaseUrl = providerConfig.baseUrl;
+    const effectiveUseSearch = Boolean(useSearch) && doesModelSupportSearchGrounding(effectiveModel, activeProviderId);
+    const effectiveResponseSpeed =
+      responseSpeed === "low" || responseSpeed === "medium" || responseSpeed === "high"
+        ? responseSpeed
+        : undefined;
 
-    console.log(`[Chat:Request] provider=${activeProviderId}, model=${effectiveModel}, responseSpeed=${responseSpeed}, useSearch=${Boolean(useSearch)}, useMaps=${Boolean(useMaps)}`);
+    console.log(
+      `[Chat:Request] provider=${activeProviderId}, model=${effectiveModel}${effectiveResponseSpeed ? `, responseSpeed=${effectiveResponseSpeed}` : ""}${effectiveUseSearch ? ", useSearch=true" : ""}${useMaps ? ", useMaps=true" : ""}`,
+    );
 
     // Set SSE headers
     res.setHeader("Content-Type", "text/event-stream");
@@ -445,7 +454,9 @@ async function startServer() {
 
         // Build tools
         const groundingTools: any[] = [];
-        if (useSearch) groundingTools.push({ googleSearch: {} });
+        if (useSearch && doesModelSupportSearchGrounding(modelToUse, "gemini")) {
+          groundingTools.push({ googleSearch: {} });
+        }
         if (useMaps && doesModelSupportMapsGrounding(modelToUse, "gemini")) {
           groundingTools.push({ googleMaps: {} });
         }
@@ -478,13 +489,11 @@ async function startServer() {
           };
         });
 
-        const modelLower = (modelToUse || "").toLowerCase();
         const supportsThinking =
           !isGeminiLiveModel(modelToUse) &&
-          !modelLower.includes("lite") &&
-          (modelLower.includes("gemini-2.5") || modelLower.includes("gemini-3") || modelLower.includes("flash") || modelLower.includes("pro"));
+          doesModelSupportResponseSpeedConfig(modelToUse, "gemini");
         const thinkingBudget =
-          responseSpeed === "low" ? 0 : responseSpeed === "high" ? 8192 : 1024;
+          (effectiveResponseSpeed || "medium") === "low" ? 0 : effectiveResponseSpeed === "high" ? 8192 : 1024;
 
         const safetySettings = [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -606,8 +615,8 @@ async function startServer() {
           top_p: topP,
           stream: true,
         };
-        if (isReasoningModel && (responseSpeed === "low" || responseSpeed === "medium" || responseSpeed === "high")) {
-          openaiBody.reasoning_effort = responseSpeed;
+        if (isReasoningModel && (effectiveResponseSpeed === "low" || effectiveResponseSpeed === "medium" || effectiveResponseSpeed === "high")) {
+          openaiBody.reasoning_effort = effectiveResponseSpeed;
         }
 
         const resp = await fetch(url, {

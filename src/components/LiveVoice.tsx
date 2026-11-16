@@ -68,6 +68,8 @@ import {
   isPlaceholderOrErrorTurn,
   getOpenRouterApiKey,
   getSelectedVoiceProvider,
+  getChatVoiceConfig,
+  OPENROUTER_TTS_DEFAULT_VOICE,
   getTtsRate,
   getTtsPitch,
 } from '../lib/persona';
@@ -103,6 +105,7 @@ import {
   buildLocalConversationPrompt,
   getSierraLocalVoicePlugin,
   ensureNativeLocalMicPermission,
+  prepareNativeAudioRoute,
   type LocalVoiceStatus,
   type LocalTtsEngineId,
   type DebugUtteranceEntry,
@@ -1100,10 +1103,14 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
             );
             stopSession('user');
           }
+        } else {
+          void prepareNativeAudioRoute('media', 'app_idle_background');
         }
       } else if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         if (isActiveRef.current && bgEnabled) {
           addDebugLog('BackgroundLive', '[BackgroundLive] App returned to foreground while Live session remained active');
+        } else if (!isActiveRef.current) {
+          void prepareNativeAudioRoute('media', 'app_idle_foreground');
         }
       }
     };
@@ -1111,6 +1118,8 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
       flushAndSaveLiveMemorySummary('pagehide');
       if (isActiveRef.current && !isBackgroundLiveEnabled()) {
         stopSession('user');
+      } else if (!isActiveRef.current) {
+        void prepareNativeAudioRoute('media', 'app_idle_pagehide');
       }
     };
     if (typeof document !== 'undefined') {
@@ -1146,6 +1155,8 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
       }
       if (isActiveRef.current) {
         stopSession('user');
+      } else {
+        void prepareNativeAudioRoute('media', 'live_tab_inactive');
       }
     }
   }, [isTabActive]);
@@ -1677,6 +1688,7 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
           lastStopTimeRef.current = Date.now();
         });
     }
+    void prepareNativeAudioRoute('media', 'live_paused');
     if (!hasLoggedPausedRef.current) {
       hasLoggedPausedRef.current = true;
       addDebugLog('STT:Paused', reason);
@@ -3375,8 +3387,13 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
         const openRouterTtsEngine = new OpenRouterLiveTtsEngine({
           getVoiceOptions: () => {
             const liveVoiceCfg = getLiveVoiceConfig(selectedPersona as PersonaId, companionIdentity);
+            const chatVoiceCfg = getChatVoiceConfig(selectedPersona as PersonaId, companionIdentity);
+            const effectiveVoice =
+              getSelectedVoiceProvider() === 'openrouter'
+                ? liveVoiceCfg.heygenVoiceId || chatVoiceCfg.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE
+                : selectedVoice || liveVoiceCfg.voiceId;
             return {
-              voiceId: selectedVoice || liveVoiceCfg.voiceId,
+              voiceId: effectiveVoice,
               accent: liveAccent || liveVoiceCfg.accent,
               tone: liveTone || liveVoiceCfg.tone,
             };
@@ -3396,11 +3413,16 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
             const sentenceText = (chunk.sentence || '').replace(/[*#_`~>]/g, '').trim();
             if (!sentenceText) return;
             const liveVoiceCfg = getLiveVoiceConfig(selectedPersona as PersonaId, companionIdentity);
+            const chatVoiceCfg = getChatVoiceConfig(selectedPersona as PersonaId, companionIdentity);
+            const effectiveVoice =
+              getSelectedVoiceProvider() === 'openrouter'
+                ? liveVoiceCfg.heygenVoiceId || chatVoiceCfg.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE
+                : selectedVoice || liveVoiceCfg.voiceId;
             const ttsRes = await speakLiveSentenceWithConfiguredProvider({
               sentence: sentenceText,
               identity: companionIdentity,
               personaId: selectedPersona as PersonaId,
-              voiceId: selectedVoice || liveVoiceCfg.voiceId,
+              voiceId: effectiveVoice,
               accent: liveAccent || liveVoiceCfg.accent,
               tone: liveTone || liveVoiceCfg.tone,
               speed: getTtsRate(),
@@ -4614,6 +4636,7 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
       setConnectionError(error.message || "Failed to establish voice connection.");
       toast.error(error.message || "Failed to start live voice session");
       stopAudioCapture();
+      void prepareNativeAudioRoute('media', 'live_start_error');
     }
   };
 
@@ -4710,6 +4733,7 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
     stopSpeechToText();
     teardownNativeListeners();
     stopPlayback();
+    void prepareNativeAudioRoute('media', `live_stop_${reason}`);
 
     if (openRouterAbortControllerRef.current) {
       openRouterAbortControllerRef.current.abort();
@@ -5720,6 +5744,7 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
   const startAudioCapture = async () => {
     try {
       addDebugLog('MicStream:Init', 'Starting 16kHz PCM audio capture pipeline...');
+      void prepareNativeAudioRoute('communication', 'live_capture_start');
       const stream = mediaStreamRef.current || await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -5887,11 +5912,13 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
       console.error("Audio capture initialization error:", error);
       addDebugLog('MicStream:Error', error.message || String(error));
       setConnectionError("Microphone hardware error: " + (error.message || "Failed to initialize audio."));
+      void prepareNativeAudioRoute('media', 'live_capture_error');
     }
   };
 
   const stopAudioCapture = () => {
     isMicStreamingRef.current = false;
+    void prepareNativeAudioRoute('media', 'live_capture_stop');
     if (micWorkletNodeRef.current) {
       try {
         micWorkletNodeRef.current.disconnect();
@@ -6264,10 +6291,17 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
           </button>
 
           {(() => {
+            const ttsProvider = getSelectedVoiceProvider();
+            const liveVoiceCfg = getLiveVoiceConfig(selectedPersona as PersonaId, companionIdentity);
+            const chatVoiceCfg = getChatVoiceConfig(selectedPersona as PersonaId, companionIdentity);
+            const requestedVoiceForLabel =
+              liveProvider !== 'gemini' && ttsProvider === 'openrouter'
+                ? liveVoiceCfg.heygenVoiceId || chatVoiceCfg.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE
+                : selectedVoice;
             const voiceLabelInfo = getEffectiveLiveVoiceLabel({
               liveProvider,
-              ttsProvider: getSelectedVoiceProvider(),
-              requestedVoice: selectedVoice,
+              ttsProvider,
+              requestedVoice: requestedVoiceForLabel,
               accent: liveAccent,
               tone: liveTone,
             });
@@ -6690,7 +6724,13 @@ export default function LiveVoice({ autoStartTrigger, isTabActive = true, onOpen
                     className="min-h-[48px] px-3 py-2 rounded-xl sci-card-interactive text-xs font-semibold text-white flex items-center justify-center gap-1.5"
                   >
                     <Volume2 className="w-4 h-4 shrink-0" style={{ color: accentHex }} />
-                    <span className="truncate">{selectedVoice}</span>
+                    <span className="truncate">
+                      {liveProvider !== 'gemini' && getSelectedVoiceProvider() === 'openrouter'
+                        ? getLiveVoiceConfig(selectedPersona as PersonaId, companionIdentity).heygenVoiceId ||
+                          getChatVoiceConfig(selectedPersona as PersonaId, companionIdentity).heygenVoiceId ||
+                          OPENROUTER_TTS_DEFAULT_VOICE
+                        : selectedVoice}
+                    </span>
                   </button>
 
                   <button

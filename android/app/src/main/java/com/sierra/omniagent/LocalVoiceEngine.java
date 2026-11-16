@@ -322,7 +322,7 @@ public class LocalVoiceEngine {
                     try {
                         androidTts.setAudioAttributes(
                                 new AudioAttributes.Builder()
-                                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                                        .setUsage(AudioAttributes.USAGE_MEDIA)
                                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                                         .build()
                         );
@@ -797,6 +797,100 @@ public class LocalVoiceEngine {
         return false;
     }
 
+    public static class AudioRouteInfo {
+        public final String mode;
+        public final String device;
+        public final String usage;
+
+        public AudioRouteInfo(String mode, String device, String usage) {
+            this.mode = mode;
+            this.device = device;
+            this.usage = usage;
+        }
+    }
+
+    private String audioModeToString(int mode) {
+        switch (mode) {
+            case AudioManager.MODE_NORMAL:
+                return "MODE_NORMAL";
+            case AudioManager.MODE_IN_COMMUNICATION:
+                return "MODE_IN_COMMUNICATION";
+            case AudioManager.MODE_IN_CALL:
+                return "MODE_IN_CALL";
+            case AudioManager.MODE_RINGTONE:
+                return "MODE_RINGTONE";
+            default:
+                return "MODE_" + mode;
+        }
+    }
+
+    private String audioDeviceTypeToString(int type) {
+        switch (type) {
+            case AudioDeviceInfo.TYPE_BUILTIN_EARPIECE:
+                return "BUILTIN_EARPIECE";
+            case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER:
+                return "BUILTIN_SPEAKER";
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+                return "WIRED_HEADSET";
+            case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                return "WIRED_HEADPHONES";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                return "BLUETOOTH_SCO";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                return "BLUETOOTH_A2DP";
+            case AudioDeviceInfo.TYPE_USB_HEADSET:
+                return "USB_HEADSET";
+            case 26:
+                return "BLE_HEADSET";
+            default:
+                return "DEVICE_TYPE_" + type;
+        }
+    }
+
+    private String describeSelectedOutputDevice(boolean isCommunicationRoute) {
+        if (audioManager == null) return "unknown";
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                AudioDeviceInfo commDev = audioManager.getCommunicationDevice();
+                if (commDev != null) {
+                    return audioDeviceTypeToString(commDev.getType()) + "(" + commDev.getProductName() + ")";
+                }
+            }
+            AudioDeviceInfo[] outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+            if (outputs != null) {
+                for (AudioDeviceInfo dev : outputs) {
+                    int type = dev.getType();
+                    if (type == AudioDeviceInfo.TYPE_WIRED_HEADSET
+                            || type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+                            || type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+                            || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                            || type == AudioDeviceInfo.TYPE_USB_HEADSET
+                            || (Build.VERSION.SDK_INT >= 31 && type == 26)) {
+                        return audioDeviceTypeToString(type);
+                    }
+                }
+            }
+            if (isCommunicationRoute) {
+                return audioManager.isSpeakerphoneOn() ? "BUILTIN_SPEAKER" : "BUILTIN_EARPIECE";
+            }
+            return "BUILTIN_SPEAKER";
+        } catch (Throwable ignored) {
+            return "unknown";
+        }
+    }
+
+    private void updateAndroidTtsUsage(int usage) {
+        if (androidTts == null) return;
+        try {
+            androidTts.setAudioAttributes(
+                    new AudioAttributes.Builder()
+                            .setUsage(usage)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+            );
+        } catch (Throwable ignored) {}
+    }
+
     private void configureVoiceCommunicationAudioMode() {
         if (audioManager == null) return;
         try {
@@ -805,6 +899,7 @@ public class LocalVoiceEngine {
             }
             audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
             audioModeModified = true;
+            updateAndroidTtsUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 AudioAttributes attrs = new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -830,8 +925,10 @@ public class LocalVoiceEngine {
         }
     }
 
-    private void restoreAudioMode() {
-        if (audioManager == null) return;
+    public AudioRouteInfo configureMediaNormalAudioMode() {
+        if (audioManager == null) {
+            return new AudioRouteInfo("MODE_NORMAL", "unknown", "USAGE_MEDIA");
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && voiceFocusRequest != null) {
                 audioManager.abandonAudioFocusRequest(voiceFocusRequest);
@@ -841,12 +938,58 @@ public class LocalVoiceEngine {
             }
         } catch (Throwable ignored) {}
         try {
-            if (audioModeModified) {
-                audioManager.setMode(previousAudioMode);
-                audioModeModified = false;
-                listener.onDiagnosticLog(0, "LocalAudio:AudioMode", "Restored AudioManager mode=" + previousAudioMode);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice();
             }
         } catch (Throwable ignored) {}
+        try {
+            audioManager.setSpeakerphoneOn(false);
+        } catch (Throwable ignored) {}
+        try {
+            audioManager.setMode(AudioManager.MODE_NORMAL);
+            audioModeModified = false;
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to configure MODE_NORMAL: " + t.getMessage());
+        }
+        updateAndroidTtsUsage(AudioAttributes.USAGE_MEDIA);
+        String modeStr = "MODE_NORMAL";
+        try {
+            modeStr = audioModeToString(audioManager.getMode());
+        } catch (Throwable ignored) {}
+        return new AudioRouteInfo(modeStr, describeSelectedOutputDevice(false), "USAGE_MEDIA");
+    }
+
+    public AudioRouteInfo prepareAudioRoute(String routeMode, String source) {
+        if ("communication".equals(routeMode)) {
+            configureVoiceCommunicationAudioMode();
+            String modeStr = "MODE_IN_COMMUNICATION";
+            if (audioManager != null) {
+                try {
+                    modeStr = audioModeToString(audioManager.getMode());
+                } catch (Throwable ignored) {}
+            }
+            AudioRouteInfo info = new AudioRouteInfo(modeStr, describeSelectedOutputDevice(true), "USAGE_VOICE_COMMUNICATION");
+            String msg = "[Audio:Route] source=" + (source != null ? source : "live")
+                    + " mode=" + info.mode + " device=" + info.device + " usage=" + info.usage;
+            Log.i(TAG, msg);
+            listener.onDiagnosticLog(0, "Audio:Route", msg);
+            return info;
+        }
+        AudioRouteInfo info = configureMediaNormalAudioMode();
+        String msg = "[Audio:Route] source=" + (source != null ? source : "media")
+                + " mode=" + info.mode + " device=" + info.device + " usage=" + info.usage;
+        Log.i(TAG, msg);
+        listener.onDiagnosticLog(0, "Audio:Route", msg);
+        return info;
+    }
+
+    private void restoreAudioMode() {
+        AudioRouteInfo info = configureMediaNormalAudioMode();
+        listener.onDiagnosticLog(
+                0,
+                "LocalAudio:AudioMode",
+                "Restored AudioManager mode=" + info.mode + " device=" + info.device
+        );
     }
 
     public synchronized void startSession() throws Exception {
@@ -926,6 +1069,15 @@ public class LocalVoiceEngine {
     }
 
     public boolean playPcmOrWavAudio(byte[] audioBytes, int defaultSampleRateHz, int turnId) {
+        return playPcmOrWavAudio(
+                audioBytes,
+                defaultSampleRateHz,
+                turnId,
+                sessionActive.get() ? "communication" : "media"
+        );
+    }
+
+    public boolean playPcmOrWavAudio(byte[] audioBytes, int defaultSampleRateHz, int turnId, String routeMode) {
         if (audioBytes == null || audioBytes.length < 2) {
             return true;
         }
@@ -976,12 +1128,21 @@ public class LocalVoiceEngine {
         int minBuf = AudioTrack.getMinBufferSize(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
         int trackBufSize = Math.max(minBuf > 0 ? minBuf : sampleRate / 5, 8192);
 
+        boolean useCommunicationRoute = "communication".equals(routeMode);
+        AudioRouteInfo routeInfo = prepareAudioRoute(
+                useCommunicationRoute ? "communication" : "media",
+                useCommunicationRoute ? "native_pcm_live" : "native_pcm_chat"
+        );
+        int audioUsage = useCommunicationRoute
+                ? AudioAttributes.USAGE_VOICE_COMMUNICATION
+                : AudioAttributes.USAGE_MEDIA;
+
         playbackCancelled.set(false);
         AudioTrack track = null;
         boolean completedCleanly = false;
         try {
             AudioAttributes attrs = new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setUsage(audioUsage)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build();
             AudioFormat format = new AudioFormat.Builder()

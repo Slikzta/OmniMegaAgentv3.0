@@ -18,6 +18,7 @@ import { auditDevicePermissionsOnLaunch } from './lib/deviceControl';
 import { applyThemeAccentCssVars } from './lib/themeStore';
 import { addDebugLog } from './lib/debugLogStore';
 import { stopSpeaking } from './lib/ttsService';
+import { prepareNativeAudioRoute } from './lib/localVoiceEngine';
 import {
   isBackgroundLiveEnabled,
   isWakeWordEnabled,
@@ -47,6 +48,12 @@ export default function App() {
     addDebugLog('Nav:TabChange', `${prevTab} -> ${nextTab} (source=${source})`);
     if (prevTab === 'chat' || (prevTab === 'live' && !isBackgroundLiveEnabled())) {
       void stopSpeaking('tab_switch');
+    }
+    if (
+      prevTab === 'live' &&
+      (!isBackgroundLiveEnabled() || !getBackgroundLiveSessionStatus().isLiveSessionActive || nextTab === 'chat')
+    ) {
+      void prepareNativeAudioRoute('media', 'tab_change');
     }
     activeTabRef.current = nextTab;
     setActiveTab(nextTab);

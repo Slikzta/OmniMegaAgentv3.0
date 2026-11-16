@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -682,6 +683,17 @@ public class LocalVoicePlugin extends Plugin implements LocalVoiceEngine.EngineE
         localSessionRunning = false;
         if (engine != null) {
             engine.stopSession();
+        } else {
+            try {
+                AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+                if (am != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        am.clearCommunicationDevice();
+                    }
+                    am.setSpeakerphoneOn(false);
+                    am.setMode(AudioManager.MODE_NORMAL);
+                }
+            } catch (Throwable ignored) {}
         }
         try {
             Intent stopIntent = new Intent(getContext(), SierraVoiceForegroundService.class);
@@ -779,10 +791,55 @@ public class LocalVoicePlugin extends Plugin implements LocalVoiceEngine.EngineE
     }
 
     @PluginMethod
+    public void prepareAudioRoute(PluginCall call) {
+        final String routeMode = call.getString("routeMode", "media");
+        final String source = call.getString("source", "js");
+        if (engine != null) {
+            LocalVoiceEngine.AudioRouteInfo info = engine.prepareAudioRoute(routeMode, source);
+            JSObject res = new JSObject();
+            res.put("ok", true);
+            res.put("mode", info.mode);
+            res.put("device", info.device);
+            res.put("usage", info.usage);
+            call.resolve(res);
+            return;
+        }
+        try {
+            AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                if (!"communication".equals(routeMode)) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        am.clearCommunicationDevice();
+                    }
+                    am.setSpeakerphoneOn(false);
+                    am.setMode(AudioManager.MODE_NORMAL);
+                } else {
+                    am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                }
+            }
+            JSObject res = new JSObject();
+            res.put("ok", true);
+            res.put("mode", "communication".equals(routeMode) ? "MODE_IN_COMMUNICATION" : "MODE_NORMAL");
+            res.put("device", "communication".equals(routeMode) ? "COMMUNICATION" : "BUILTIN_SPEAKER");
+            res.put("usage", "communication".equals(routeMode) ? "USAGE_VOICE_COMMUNICATION" : "USAGE_MEDIA");
+            call.resolve(res);
+        } catch (Throwable t) {
+            JSObject err = new JSObject();
+            err.put("ok", false);
+            err.put("mode", "MODE_NORMAL");
+            err.put("device", "unknown");
+            err.put("usage", "USAGE_MEDIA");
+            err.put("reason", t.getMessage() != null ? t.getMessage() : t.toString());
+            call.resolve(err);
+        }
+    }
+
+    @PluginMethod
     public void playPcmAudio(PluginCall call) {
         final String pcmBase64 = call.getString("pcmBase64", "");
         final int sampleRate = call.getInt("sampleRate", 44100);
         final int turnId = call.getInt("turnId", 0);
+        final String routeMode = call.getString("routeMode", "media");
 
         if (engine == null || pcmBase64 == null || pcmBase64.isEmpty()) {
             JSObject err = new JSObject();
@@ -796,7 +853,7 @@ public class LocalVoicePlugin extends Plugin implements LocalVoiceEngine.EngineE
         playbackExecutor.submit(() -> {
             try {
                 byte[] decoded = Base64.decode(pcmBase64, Base64.DEFAULT);
-                boolean completed = engine.playPcmOrWavAudio(decoded, sampleRate, turnId);
+                boolean completed = engine.playPcmOrWavAudio(decoded, sampleRate, turnId, routeMode);
                 JSObject res = new JSObject();
                 res.put("ok", true);
                 res.put("interrupted", !completed);

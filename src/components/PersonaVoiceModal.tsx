@@ -7,6 +7,8 @@ import {
   UNIFIED_PERSONAS,
   VoiceOption,
   GEMINI_LIVE_VOICES,
+  HEYGEN_OPENROUTER_VOICES,
+  isHeyGenVoiceId,
   LiveVoiceName,
   VOICE_ACCENT_OPTIONS,
   VOICE_TONE_OPTIONS,
@@ -26,6 +28,7 @@ import {
   setTtsPitch,
   setTtsRate,
   OPENROUTER_TTS_MODEL,
+  OPENROUTER_TTS_DEFAULT_VOICE,
   ContentMode,
   CONTENT_MODES,
   deriveLanguageCodeFromAccent,
@@ -92,6 +95,9 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
   // Independent Live Voice State
   const initialLiveCfg = getLiveVoiceConfig(selectedPersonaId, selectedIdentity);
   const [liveVoiceId, setLiveVoiceId] = useState<LiveVoiceName>(initialLiveCfg.voiceId);
+  const [liveHeyGenVoiceId, setLiveHeyGenVoiceId] = useState<string>(
+    initialLiveCfg.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE
+  );
   const [liveAccent, setLiveAccent] = useState<string>(initialLiveCfg.accent || 'Default');
   const [liveTone, setLiveTone] = useState<string>(initialLiveCfg.tone || 'Default');
 
@@ -125,6 +131,7 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
 
     const lCfg = getLiveVoiceConfig(pId, id);
     setLiveVoiceId(lCfg.voiceId);
+    setLiveHeyGenVoiceId(lCfg.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE);
     setLiveAccent(lCfg.accent || 'Default');
     setLiveTone(lCfg.tone || 'Default');
 
@@ -175,6 +182,7 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
 
     const lCfg = getLiveVoiceConfig(selectedPersonaId, newIdentity);
     setLiveVoiceId(lCfg.voiceId);
+    setLiveHeyGenVoiceId(lCfg.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE);
     setLiveAccent(lCfg.accent || 'Default');
     setLiveTone(lCfg.tone || 'Default');
 
@@ -205,11 +213,16 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
     const lCfg = getLiveVoiceConfig(personaId, selectedIdentity);
     const cCfg = getChatVoiceConfig(personaId, selectedIdentity);
     setLiveVoiceId(lCfg.voiceId);
+    setLiveHeyGenVoiceId(lCfg.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE);
     setLiveAccent(lCfg.accent || 'Default');
     setLiveTone(lCfg.tone || 'Default');
+    setChatProvider(cCfg.provider);
     setChatVoiceId(cCfg.voiceId);
+    setChatSpeed(cCfg.speed);
+    setChatPitch(cCfg.pitch);
     setChatAccent(cCfg.accent || 'Default');
     setChatTone(cCfg.tone || 'Default');
+    setChatSpeechEnabledState(cCfg.enabled);
 
     const activeVoice = mode === 'chat-voice' ? cCfg.voiceId : lCfg.voiceId;
     const selectedGender = IDENTITIES[selectedIdentity]?.gender || (selectedIdentity === 'tyler' ? 'male' : 'female');
@@ -226,8 +239,23 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
     persistCustomDirectives(val);
   };
 
+  const liveUsesOpenRouterHeyGen =
+    appSettings.models.liveProvider !== 'gemini' && getSelectedVoiceProvider() === 'openrouter';
+
   // Live Voice Handlers
   const handleLiveVoiceSelect = (voice: VoiceOption) => {
+    if (liveUsesOpenRouterHeyGen || isHeyGenVoiceId(voice.id)) {
+      const nextHeyGen = voice.id;
+      setLiveHeyGenVoiceId(nextHeyGen);
+      const updated = setLiveVoiceConfig({ heygenVoiceId: nextHeyGen }, selectedPersonaId, selectedIdentity);
+      addDebugLog(
+        'Selector:Tap',
+        `[Selector:Tap] Live HeyGen voice tapped -> ${nextHeyGen} (persona=${selectedPersonaId})`
+      );
+      onChanged?.(selectedIdentity, selectedPersonaId, nextHeyGen);
+      onLiveVoiceConfigChanged?.(updated);
+      return;
+    }
     const nextVoiceId = voice.id as LiveVoiceName;
     setLiveVoiceId(nextVoiceId);
     const updated = setLiveVoiceConfig({ voiceId: nextVoiceId }, selectedPersonaId, selectedIdentity);
@@ -239,9 +267,6 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
     onChanged?.(selectedIdentity, selectedPersonaId, updated.voiceId);
     onLiveVoiceConfigChanged?.(updated);
   };
-
-  const liveUsesOpenRouterHeyGen =
-    appSettings.models.liveProvider !== 'gemini' && getSelectedVoiceProvider() === 'openrouter';
 
   const handleLiveAccentSelect = (accent: string) => {
     if (liveUsesOpenRouterHeyGen) return;
@@ -279,7 +304,9 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
     setChatProvider(provider);
     setSelectedVoiceProvider(provider);
     const updated = setChatVoiceConfig({ provider }, selectedPersonaId, selectedIdentity);
-    addDebugLog('Selector:Tap', `[Selector:Tap] Chat voice provider tapped -> ${provider}`);
+    setChatVoiceId(updated.voiceId);
+    addDebugLog('Selector:Tap', `[Selector:Tap] Chat voice provider tapped -> ${provider} (voice=${updated.voiceId})`);
+    onChanged?.(selectedIdentity, selectedPersonaId, updated.voiceId);
     onChatVoiceConfigChanged?.(updated);
   };
 
@@ -294,6 +321,7 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
   };
 
   const handleChatSpeedChange = (speed: number) => {
+    if (chatProvider === 'openrouter') return;
     const rounded = parseFloat(speed.toFixed(2));
     setChatSpeed(rounded);
     setTtsRate(rounded);
@@ -302,6 +330,7 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
   };
 
   const handleChatPitchChange = (pitch: number) => {
+    if (chatProvider === 'openrouter') return;
     const rounded = parseFloat(pitch.toFixed(2));
     setChatPitch(rounded);
     setTtsPitch(rounded);
@@ -310,6 +339,7 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
   };
 
   const handleResetSliders = () => {
+    if (chatProvider === 'openrouter') return;
     const updated = resetTtsSlidersToDefault(selectedPersonaId, selectedIdentity);
     setChatSpeed(1.0);
     setChatPitch(1.0);
@@ -381,7 +411,7 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
       selectedIdentity,
       selectedPersonaId,
       {
-        provider: mode === 'live-voice' ? 'native' : chatProvider,
+        provider: mode === 'live-voice' ? (liveUsesOpenRouterHeyGen ? 'openrouter' : 'native') : chatProvider,
         speed: chatSpeed,
         pitch: chatPitch,
         accent: mode === 'live-voice' ? liveAccent : chatAccent,
@@ -395,8 +425,16 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
     }
   };
 
-  const currentVoiceId = mode === 'live-voice' ? liveVoiceId : chatVoiceId;
-  const voicePool = mode === 'live-voice' ? GEMINI_LIVE_VOICES : availableVoices;
+  const currentVoiceId =
+    mode === 'live-voice' ? (liveUsesOpenRouterHeyGen ? liveHeyGenVoiceId : liveVoiceId) : chatVoiceId;
+  const voicePool =
+    mode === 'live-voice'
+      ? liveUsesOpenRouterHeyGen
+        ? HEYGEN_OPENROUTER_VOICES
+        : GEMINI_LIVE_VOICES
+      : chatProvider === 'openrouter'
+      ? HEYGEN_OPENROUTER_VOICES
+      : availableVoices;
 
   const activeVoiceOption = useMemo(() => {
     return voicePool.find((v) => v.id === currentVoiceId) || voicePool[0];
@@ -601,7 +639,7 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
                   data-testid="live-voice-heygen-accent-tone-notice"
                   className="text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-2 rounded-lg"
                 >
-                  Accent/tone not supported by this voice provider
+                  Speed, pitch, accent, and tone apply only to native voices.
                 </p>
               )}
 
@@ -706,7 +744,9 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
 
                 <div className="grid grid-cols-1 gap-2">
                   {filteredVoices.map((voice) => {
-                    const isSelected = liveVoiceId === voice.id;
+                    const isSelected = liveUsesOpenRouterHeyGen
+                      ? liveHeyGenVoiceId === voice.id
+                      : liveVoiceId === voice.id;
                     return (
                       <div
                         key={voice.id}
@@ -814,115 +854,112 @@ export const PersonaVoiceModal: React.FC<PersonaVoiceModalProps> = ({
                 </div>
               </div>
 
-              {/* Speed & Pitch Sliders + Reset to Default */}
-              <div className="space-y-2.5 pt-2 border-t border-zinc-800">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Speed &amp; Pitch
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleResetSliders}
-                    className="inline-flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    Reset to default (1.0x)
-                  </button>
-                </div>
-                <p className="text-[10px] text-zinc-500">
-                  Adjust speaking rate and vocal pitch for spoken chat replies.
+              {chatProvider === 'openrouter' ? (
+                <p
+                  data-testid="chat-voice-heygen-accent-tone-notice"
+                  className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-3 py-2 rounded-xl"
+                >
+                  Speed, pitch, accent, and tone apply only to native voices.
                 </p>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
-                    <div className="flex justify-between text-[11px]">
-                      <span className="text-zinc-400">Speed</span>
-                      <span className="font-mono text-indigo-300">{chatSpeed.toFixed(2)}x</span>
+              ) : (
+                <>
+                  {/* Speed & Pitch Sliders + Reset to Default */}
+                  <div className="space-y-2.5 pt-2 border-t border-zinc-800">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                        Speed &amp; Pitch
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleResetSliders}
+                        className="inline-flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset to default (1.0x)
+                      </button>
                     </div>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="2.0"
-                      step="0.05"
-                      value={chatSpeed}
-                      onChange={(e) => handleChatSpeedChange(parseFloat(e.target.value))}
-                      className="w-full accent-indigo-500"
-                    />
+                    <p className="text-[10px] text-zinc-500">
+                      Adjust speaking rate and vocal pitch for spoken chat replies.
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-zinc-400">Speed</span>
+                          <span className="font-mono text-indigo-300">{chatSpeed.toFixed(2)}x</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="2.0"
+                          step="0.05"
+                          value={chatSpeed}
+                          onChange={(e) => handleChatSpeedChange(parseFloat(e.target.value))}
+                          className="w-full accent-indigo-500"
+                        />
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-zinc-400">Pitch</span>
+                          <span className="font-mono text-indigo-300">{chatPitch.toFixed(2)}x</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="2.0"
+                          step="0.05"
+                          value={chatPitch}
+                          onChange={(e) => handleChatPitchChange(parseFloat(e.target.value))}
+                          className="w-full accent-indigo-500"
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
-                    <div className="flex justify-between text-[11px]">
-                      <span className="text-zinc-400">Pitch</span>
-                      <span className="font-mono text-indigo-300">{chatPitch.toFixed(2)}x</span>
+                  {/* Accent & Tone Chips for Chat Voice */}
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    <p className="text-[10px] text-zinc-500">
+                      Select regional accent locale ({deriveLanguageCodeFromAccent(chatAccent)}) and vocal tone; automatically chooses a matching base voice if none was manually picked.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                      <span className="text-zinc-500 mr-1">Accent:</span>
+                      {VOICE_ACCENT_OPTIONS.map((acc) => (
+                        <button
+                          key={acc}
+                          type="button"
+                          onClick={() => handleChatAccentSelect(acc)}
+                          className={`px-2 py-0.5 rounded-full text-[10px] transition touch-manipulation ${
+                            chatAccent === acc
+                              ? 'bg-indigo-600 text-white font-semibold cursor-pointer'
+                              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 cursor-pointer'
+                          }`}
+                        >
+                          {acc}
+                        </button>
+                      ))}
                     </div>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="2.0"
-                      step="0.05"
-                      value={chatPitch}
-                      onChange={(e) => handleChatPitchChange(parseFloat(e.target.value))}
-                      className="w-full accent-indigo-500"
-                    />
+
+                    <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                      <span className="text-zinc-500 mr-1">Tone:</span>
+                      {VOICE_TONE_OPTIONS.map((tone) => (
+                        <button
+                          key={tone}
+                          type="button"
+                          onClick={() => handleChatToneSelect(tone)}
+                          className={`px-2 py-0.5 rounded-full text-[10px] transition touch-manipulation ${
+                            chatTone === tone
+                              ? 'bg-purple-600 text-white font-semibold cursor-pointer'
+                              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 cursor-pointer'
+                          }`}
+                        >
+                          {tone}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              </div>
-
-              {/* Accent & Tone Chips for Chat Voice */}
-              <div className="space-y-2 pt-2 border-t border-zinc-800">
-                {chatProvider === 'openrouter' && (
-                  <p
-                    data-testid="chat-voice-heygen-accent-tone-notice"
-                    className="text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 px-2.5 py-2 rounded-lg"
-                  >
-                    Accent/tone not supported by this voice provider
-                  </p>
-                )}
-                <p className="text-[10px] text-zinc-500">
-                  Select regional accent locale ({deriveLanguageCodeFromAccent(chatAccent)}) and vocal tone; automatically chooses a matching base voice if none was manually picked.
-                </p>
-                <div className={`flex flex-wrap items-center gap-1 text-[11px] ${chatProvider === 'openrouter' ? 'opacity-50' : ''}`}>
-                  <span className="text-zinc-500 mr-1">Accent:</span>
-                  {VOICE_ACCENT_OPTIONS.map((acc) => (
-                    <button
-                      key={acc}
-                      type="button"
-                      disabled={chatProvider === 'openrouter'}
-                      onClick={() => handleChatAccentSelect(acc)}
-                      className={`px-2 py-0.5 rounded-full text-[10px] transition touch-manipulation ${
-                        chatProvider === 'openrouter'
-                          ? 'bg-zinc-900 text-zinc-500 cursor-not-allowed opacity-60'
-                          : chatAccent === acc
-                          ? 'bg-indigo-600 text-white font-semibold cursor-pointer'
-                          : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 cursor-pointer'
-                      }`}
-                    >
-                      {acc}
-                    </button>
-                  ))}
-                </div>
-
-                <div className={`flex flex-wrap items-center gap-1 text-[11px] ${chatProvider === 'openrouter' ? 'opacity-50' : ''}`}>
-                  <span className="text-zinc-500 mr-1">Tone:</span>
-                  {VOICE_TONE_OPTIONS.map((tone) => (
-                    <button
-                      key={tone}
-                      type="button"
-                      disabled={chatProvider === 'openrouter'}
-                      onClick={() => handleChatToneSelect(tone)}
-                      className={`px-2 py-0.5 rounded-full text-[10px] transition touch-manipulation ${
-                        chatProvider === 'openrouter'
-                          ? 'bg-zinc-900 text-zinc-500 cursor-not-allowed opacity-60'
-                          : chatTone === tone
-                          ? 'bg-purple-600 text-white font-semibold cursor-pointer'
-                          : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 cursor-pointer'
-                      }`}
-                    >
-                      {tone}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                </>
+              )}
 
               {/* Voice Catalog for Native / Fallback */}
               <div className="space-y-2 pt-2 border-t border-zinc-800">

@@ -38,14 +38,34 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            def ksPath = System.getenv("KEYSTORE_PATH")
+            if (ksPath) {
+                storeFile file(ksPath)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
+        def hasReleaseKeystore = Boolean.valueOf(
+            System.getenv("KEYSTORE_PATH") &&
+            new File(System.getenv("KEYSTORE_PATH")).exists() &&
+            System.getenv("KEYSTORE_PASSWORD") &&
+            System.getenv("KEY_ALIAS") &&
+            System.getenv("KEY_PASSWORD")
+        )
         debug {
             signingConfig signingConfigs.debug
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
         }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

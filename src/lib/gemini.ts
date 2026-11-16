@@ -137,6 +137,14 @@ export async function testGeminiLiveWebSocket(params: {
     const finish = (result: { success: boolean; latencyMs: number; message?: string; error?: string }) => {
       if (settled) return;
       settled = true;
+      addDebugLog(
+        'ProviderTest:GeminiLive',
+        `[ProviderTest] provider=gemini_live model=${targetModel} result=${result.success ? 'PASS' : 'FAIL'} latency=${result.latencyMs}ms ${
+          result.success
+            ? `message="${result.message || 'Connected'}"`
+            : `error="${result.error || 'WebSocket connection failed'}"`
+        }`,
+      );
       cleanup();
       resolve(result);
     };

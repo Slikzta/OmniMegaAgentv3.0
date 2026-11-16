@@ -24,14 +24,27 @@ import {
   getOpenRouterApiKey,
   OPENROUTER_TTS_MODEL,
   OPENROUTER_TTS_DEFAULT_VOICE,
+  isHeyGenVoiceId,
 } from './persona';
 import { getProviderHttpEndpoint } from './settingsStore';
 import {
   getSierraLocalVoicePlugin,
+  prepareNativeAudioRoute,
   type LocalTtsEngine,
   type LocalTtsEngineId,
   type SynthesizedAudioChunk,
 } from './localVoiceEngine';
+
+async function prepareRouteAndLog(
+  routeMode: 'media' | 'communication',
+  source: string,
+): Promise<void> {
+  const info = await prepareNativeAudioRoute(routeMode, source);
+  addDebugLog(
+    'Audio:Route',
+    `[Audio:Route] source=${source} mode=${info.mode} device=${info.device} usage=${info.usage}`,
+  );
+}
 
 let isSpeakingActive = false;
 let currentUtterance: SpeechSynthesisUtterance | null = null;
@@ -40,13 +53,7 @@ let activeAbortController: AbortController | null = null;
 const activePrefetchControllers = new Set<AbortController>();
 let playbackGenerationToken = 0;
 
-export const OPENROUTER_HEYGEN_VOICE_MAP: Record<string, string> = {
-  Aoede: OPENROUTER_TTS_DEFAULT_VOICE,
-  Kore: OPENROUTER_TTS_DEFAULT_VOICE,
-  Charon: OPENROUTER_TTS_DEFAULT_VOICE,
-  Fenrir: OPENROUTER_TTS_DEFAULT_VOICE,
-  Puck: OPENROUTER_TTS_DEFAULT_VOICE,
-};
+export const OPENROUTER_HEYGEN_VOICE_MAP: Record<string, string> = {};
 
 export interface EffectiveOpenRouterVoiceResolution {
   requestedVoice: string;
@@ -59,8 +66,7 @@ export interface EffectiveOpenRouterVoiceResolution {
 }
 
 /**
- * Resolves which voice OpenRouter HeyGen TTS actually uses and flags when a preset
- * voice/accent/tone is remapped or ignored by the remote endpoint.
+ * Resolves which voice OpenRouter HeyGen TTS uses and passes the selected voice directly.
  */
 export function resolveOpenRouterTtsVoice(options: {
   requestedVoice?: string;
@@ -71,21 +77,13 @@ export function resolveOpenRouterTtsVoice(options: {
   const accent = (options.accent || 'Default').trim() || 'Default';
   const tone = (options.tone || 'Default').trim() || 'Default';
 
-  const isGeminiPreset = SUPPORTED_LIVE_VOICES.includes(requested as any);
-  const isDeviceTtsId = requested.startsWith('tts-');
-  const effectiveVoice =
-    isGeminiPreset || isDeviceTtsId
-      ? OPENROUTER_HEYGEN_VOICE_MAP[requested] || OPENROUTER_TTS_DEFAULT_VOICE
-      : requested;
-
-  const presetRemapped = effectiveVoice.toLowerCase() !== requested.toLowerCase();
+  const effectiveVoice = requested;
+  const presetRemapped = false;
   const ignoredAccentOrTone =
     (accent.toLowerCase() !== 'default' && accent.toLowerCase() !== 'all') ||
     (tone.toLowerCase() !== 'default' && tone.toLowerCase() !== 'all');
 
-  const statusLabel = presetRemapped
-    ? `${effectiveVoice} (HeyGen default; ${requested} preset unused)`
-    : effectiveVoice;
+  const statusLabel = effectiveVoice;
 
   return {
     requestedVoice: requested,
@@ -121,7 +119,6 @@ export function getEffectiveLiveVoiceLabel(options: {
     return {
       effectiveVoice: mapped.effectiveVoice,
       label: `OpenRouter HeyGen · ${mapped.effectiveVoice}`,
-      note: mapped.presetRemapped ? `${mapped.requestedVoice} preset unused by HeyGen` : undefined,
     };
   }
   const clean = options.requestedVoice || 'Default';
@@ -853,13 +850,21 @@ async function playAudioChunkWithAecRouting(options: {
   token: number;
   signal: AbortSignal;
   turnId?: number;
+  routeMode?: 'media' | 'communication';
 }): Promise<{ interrupted: boolean }> {
   const { wavBlob, pcmBytes, token, signal, turnId } = options;
+  const routeMode: 'media' | 'communication' =
+    options.routeMode === 'communication' ? 'communication' : 'media';
   if (!isSpeakingActive || signal.aborted || token !== playbackGenerationToken) {
     return { interrupted: true };
   }
 
-  // Prefer native AudioTrack with USAGE_VOICE_COMMUNICATION on Android
+  await prepareRouteAndLog(
+    routeMode,
+    routeMode === 'communication' ? 'openrouter_live' : 'openrouter_chat',
+  );
+
+  // Use native AudioTrack with requested routeMode (USAGE_MEDIA for chat, USAGE_VOICE_COMMUNICATION for live)
   if (Capacitor.isNativePlatform() && pcmBytes && pcmBytes.length > 0) {
     const plugin = getSierraLocalVoicePlugin();
     if (typeof plugin.playPcmAudio === 'function') {
@@ -870,6 +875,7 @@ async function playAudioChunkWithAecRouting(options: {
         pcmBase64,
         sampleRate: 44100,
         turnId,
+        routeMode,
       });
       if (res?.interrupted || signal.aborted || token !== playbackGenerationToken) {
         return { interrupted: true };
@@ -1081,11 +1087,14 @@ export async function playOpenRouterTts(options: {
   speed?: number;
   turnId?: number;
   source: 'chat' | 'test';
+  routeMode?: 'media' | 'communication';
   replyReceivedTime?: number;
   preserveQueue?: boolean;
   prefetchedAudio?: OpenRouterPrefetchedAudio;
   signal?: AbortSignal;
 }): Promise<{ ok: boolean; interrupted?: boolean; error?: string }> {
+  const routeMode: 'media' | 'communication' =
+    options.routeMode === 'communication' ? 'communication' : 'media';
   const replyReceived = options.replyReceivedTime || Date.now();
   const apiKey = getOpenRouterApiKey();
   if (!apiKey) {
@@ -1198,6 +1207,7 @@ export async function playOpenRouterTts(options: {
             token: myToken,
             signal: controller.signal,
             turnId: options.turnId,
+            routeMode,
           });
           if (playOutcome.interrupted || myToken !== playbackGenerationToken || controller.signal.aborted) {
             wasInterrupted = true;
@@ -1220,7 +1230,7 @@ export async function playOpenRouterTts(options: {
           const chatCfg = getChatVoiceConfig();
           await executeSpeechCore({
             text: chunks[i],
-            voiceId: chatCfg.voiceId,
+            voiceId: chatCfg.nativeVoiceId || chatCfg.voiceId,
             identity: getActiveIdentity(),
             personaId: getActivePersonaId(),
             pitch: chatCfg.pitch,
@@ -1228,6 +1238,7 @@ export async function playOpenRouterTts(options: {
             accent: chatCfg.accent,
             tone: chatCfg.tone,
             source: options.source,
+            routeMode,
             preserveQueue: true,
           });
         }
@@ -1257,7 +1268,7 @@ export async function playOpenRouterTts(options: {
         const chatCfg = getChatVoiceConfig();
         await executeSpeechCore({
           text: chunks[i],
-          voiceId: chatCfg.voiceId,
+          voiceId: chatCfg.nativeVoiceId || chatCfg.voiceId,
           identity: getActiveIdentity(),
           personaId: getActivePersonaId(),
           pitch: chatCfg.pitch,
@@ -1265,6 +1276,7 @@ export async function playOpenRouterTts(options: {
           accent: chatCfg.accent,
           tone: chatCfg.tone,
           source: options.source,
+          routeMode,
           preserveQueue: true,
         });
       }
@@ -1303,9 +1315,12 @@ async function executeSpeechCore(options: {
   accent?: string;
   tone?: string;
   source: 'chat' | 'test';
+  routeMode?: 'media' | 'communication';
   preserveQueue?: boolean;
 }): Promise<{ ok: boolean; error?: string }> {
   const { text, voiceId, identity, personaId, pitch, rate, accent, tone, source } = options;
+  const routeMode: 'media' | 'communication' =
+    options.routeMode === 'communication' ? 'communication' : 'media';
 
   const clean = cleanTextForSpeech(text);
   if (!clean || clean.length === 0) {
@@ -1341,6 +1356,11 @@ async function executeSpeechCore(options: {
     await stopSpeaking('Starting native TTS');
     setSpeakingActiveState(true);
   }
+
+  await prepareRouteAndLog(
+    routeMode,
+    routeMode === 'communication' ? 'live_native_tts' : `${source}_native_tts`,
+  );
 
   // 2. Play via Native Capacitor TTS if on mobile
   if (Capacitor.isNativePlatform()) {
@@ -1489,13 +1509,16 @@ export async function speakTextChatReply(text: string): Promise<void> {
 
   // Route to OpenRouter Voice if chosen
   if (provider === 'openrouter') {
+    const openRouterVoice =
+      (isHeyGenVoiceId(voiceId) ? voiceId : chatCfg.heygenVoiceId) || OPENROUTER_TTS_DEFAULT_VOICE;
     const res = await playOpenRouterTts({
       text,
-      voice: voiceId || OPENROUTER_TTS_DEFAULT_VOICE,
+      voice: openRouterVoice,
       accent: chatCfg.accent,
       tone: chatCfg.tone,
       speed: rate,
       source: 'chat',
+      routeMode: 'media',
       replyReceivedTime: Date.now(),
     });
     if (res.ok || res.interrupted) {
@@ -1507,7 +1530,7 @@ export async function speakTextChatReply(text: string): Promise<void> {
 
   await executeSpeechCore({
     text,
-    voiceId,
+    voiceId: provider === 'openrouter' ? chatCfg.nativeVoiceId || voiceId : voiceId,
     identity,
     personaId,
     pitch,
@@ -1515,6 +1538,7 @@ export async function speakTextChatReply(text: string): Promise<void> {
     accent: chatCfg.accent,
     tone: chatCfg.tone,
     source: 'chat',
+    routeMode: 'media',
   });
 }
 
@@ -1561,6 +1585,7 @@ export async function speakLiveSentenceWithConfiguredProvider(options: {
       speed,
       turnId: options.turnId,
       source: 'chat',
+      routeMode: 'communication',
       replyReceivedTime: Date.now(),
       preserveQueue: options.preserveQueue,
       prefetchedAudio: options.prefetchedOpenRouterAudio,
@@ -1592,6 +1617,7 @@ export async function speakLiveSentenceWithConfiguredProvider(options: {
     accent,
     tone,
     source: 'chat',
+    routeMode: 'communication',
     preserveQueue: true,
   });
   if (!options.preserveQueue && startToken === playbackGenerationToken) {
@@ -1745,6 +1771,7 @@ export async function testVoicePlayback(
       tone,
       speed: rate,
       source: 'test',
+      routeMode: 'media',
     });
     if (res.ok || res.interrupted) {
       return { ok: true };
@@ -1762,6 +1789,7 @@ export async function testVoicePlayback(
     accent,
     tone,
     source: 'test',
+    routeMode: 'media',
   });
 }
 

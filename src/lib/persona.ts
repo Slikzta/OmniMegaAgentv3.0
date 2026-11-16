@@ -309,6 +309,99 @@ export const GEMINI_LIVE_VOICES: VoiceOption[] = [
 ];
 
 /**
+ * Official HeyGen OpenRouter TTS Voices (heygen/heygen-voice-1-turbo)
+ * Starting with default 'nadine'.
+ */
+export const HEYGEN_OPENROUTER_VOICES: VoiceOption[] = [
+  {
+    id: 'nadine',
+    name: 'nadine',
+    gender: 'female',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'Default HeyGen female voice',
+  },
+  {
+    id: 'tabitha',
+    name: 'tabitha',
+    gender: 'female',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen female voice',
+  },
+  {
+    id: 'noelle',
+    name: 'noelle',
+    gender: 'female',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen female voice',
+  },
+  {
+    id: 'meredith',
+    name: 'meredith',
+    gender: 'female',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen female voice',
+  },
+  {
+    id: 'sabrina',
+    name: 'sabrina',
+    gender: 'female',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen female voice',
+  },
+  {
+    id: 'bram',
+    name: 'bram',
+    gender: 'male',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen male voice',
+  },
+  {
+    id: 'gareth',
+    name: 'gareth',
+    gender: 'male',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen male voice',
+  },
+  {
+    id: 'lucian',
+    name: 'lucian',
+    gender: 'male',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen male voice',
+  },
+  {
+    id: 'weston',
+    name: 'weston',
+    gender: 'male',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen male voice',
+  },
+  {
+    id: 'vincent',
+    name: 'vincent',
+    gender: 'male',
+    isLiveVoice: false,
+    lang: 'en-US',
+    description: 'HeyGen male voice',
+  },
+];
+
+export function isHeyGenVoiceId(voiceId?: string): boolean {
+  const clean = (voiceId || '').trim().toLowerCase();
+  if (!clean) return false;
+  return HEYGEN_OPENROUTER_VOICES.some((v) => v.id === clean);
+}
+
+/**
  * Maps real BCP 47 locale to human-readable accent label.
  * Only applied where the locale itself gives a real accent.
  */
@@ -526,6 +619,7 @@ export const VOICE_TONE_OPTIONS = [
 
 export interface LiveVoiceConfig {
   voiceId: LiveVoiceName;
+  heygenVoiceId?: string;
   accent: string;
   tone: string;
   userSelectedVoice?: boolean;
@@ -544,6 +638,8 @@ export const OPENROUTER_TTS_DEFAULT_VOICE = 'nadine';
 export interface ChatVoiceConfig {
   provider: SierraVoiceProvider;
   voiceId: string;
+  heygenVoiceId?: string;
+  nativeVoiceId?: string;
   speed: number;
   pitch: number;
   accent: string;
@@ -764,6 +860,7 @@ export function getLiveVoiceConfig(
   const defaultTone = GEMINI_LIVE_VOICES.find((v) => v.id === defaultVoiceId)?.tone || 'Default';
   const fallback: LiveVoiceConfig = {
     voiceId: defaultVoiceId,
+    heygenVoiceId: OPENROUTER_TTS_DEFAULT_VOICE,
     accent: 'Default',
     tone: defaultTone,
     userSelectedVoice: false,
@@ -784,8 +881,13 @@ export function getLiveVoiceConfig(
       const validVoiceId: LiveVoiceName = SUPPORTED_LIVE_VOICES.includes(parsed.voiceId)
         ? parsed.voiceId
         : defaultVoiceId;
+      const savedHeyGen =
+        typeof parsed.heygenVoiceId === 'string' && parsed.heygenVoiceId.trim()
+          ? parsed.heygenVoiceId.trim()
+          : OPENROUTER_TTS_DEFAULT_VOICE;
       return {
         voiceId: validVoiceId,
+        heygenVoiceId: savedHeyGen,
         accent: typeof parsed.accent === 'string' && parsed.accent.trim() ? parsed.accent.trim() : 'Default',
         tone: typeof parsed.tone === 'string' && parsed.tone.trim() ? parsed.tone.trim() : defaultTone,
         userSelectedVoice: Boolean(parsed.userSelectedVoice),
@@ -821,8 +923,14 @@ export function setLiveVoiceConfig(
     nextVoiceId = getMatchingBaseVoiceForAccentAndTone(nextAccent, nextTone, identity, safePersona);
   }
 
+  const nextHeyGenVoiceId =
+    typeof partial.heygenVoiceId === 'string' && partial.heygenVoiceId.trim()
+      ? partial.heygenVoiceId.trim()
+      : current.heygenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE;
+
   const next: LiveVoiceConfig = {
     voiceId: nextVoiceId,
+    heygenVoiceId: nextHeyGenVoiceId,
     accent: nextAccent,
     tone: nextTone,
     userSelectedVoice: nextUserSelectedVoice,
@@ -833,7 +941,7 @@ export function setLiveVoiceConfig(
   }
   addDebugLog(
     'LiveVoice:Config',
-    `[LiveVoice] Saved config for ${identity}/${safePersona}: voice=${next.voiceId}, accent=${next.accent}, tone=${next.tone}, userSelected=${Boolean(next.userSelectedVoice)}`
+    `[LiveVoice] Saved config for ${identity}/${safePersona}: voice=${next.voiceId}, heygenVoice=${next.heygenVoiceId}, accent=${next.accent}, tone=${next.tone}, userSelected=${Boolean(next.userSelectedVoice)}`
   );
   return next;
 }
@@ -845,9 +953,12 @@ export function getChatVoiceConfig(
   const safePersona: PersonaId = personaId in UNIFIED_PERSONAS ? personaId : 'classy';
   const chatKey = `sierra_chat_voice_config_${identity}_${safePersona}`;
   const defaultVoiceId = getDefaultLiveVoiceForPersona(safePersona, identity);
+  const initialProvider = getSelectedVoiceProvider();
   const fallback: ChatVoiceConfig = {
-    provider: getSelectedVoiceProvider(),
-    voiceId: defaultVoiceId,
+    provider: initialProvider,
+    voiceId: initialProvider === 'openrouter' ? OPENROUTER_TTS_DEFAULT_VOICE : defaultVoiceId,
+    heygenVoiceId: OPENROUTER_TTS_DEFAULT_VOICE,
+    nativeVoiceId: defaultVoiceId,
     speed: getTtsRate(),
     pitch: getTtsPitch(),
     accent: 'Default',
@@ -867,9 +978,31 @@ export function getChatVoiceConfig(
 
     if (raw) {
       const parsed = JSON.parse(raw);
+      const provider: SierraVoiceProvider = parsed.provider === 'openrouter' ? 'openrouter' : 'native';
+      const rawVoice = typeof parsed.voiceId === 'string' && parsed.voiceId.trim() ? parsed.voiceId.trim() : '';
+      const isLegacyPresetOrDevice =
+        SUPPORTED_LIVE_VOICES.includes(rawVoice as LiveVoiceName) || rawVoice.startsWith('tts-');
+      const savedHeyGen =
+        typeof parsed.heygenVoiceId === 'string' && parsed.heygenVoiceId.trim()
+          ? parsed.heygenVoiceId.trim()
+          : provider === 'openrouter' && rawVoice && !isLegacyPresetOrDevice
+          ? rawVoice
+          : OPENROUTER_TTS_DEFAULT_VOICE;
+      const savedNative =
+        typeof parsed.nativeVoiceId === 'string' && parsed.nativeVoiceId.trim()
+          ? parsed.nativeVoiceId.trim()
+          : rawVoice && !isHeyGenVoiceId(rawVoice)
+          ? rawVoice
+          : defaultVoiceId;
+      const resolvedVoiceId =
+        rawVoice ||
+        (provider === 'openrouter' ? savedHeyGen : savedNative);
+
       return {
-        provider: parsed.provider === 'openrouter' ? 'openrouter' : 'native',
-        voiceId: typeof parsed.voiceId === 'string' && parsed.voiceId.trim() ? parsed.voiceId.trim() : defaultVoiceId,
+        provider,
+        voiceId: resolvedVoiceId,
+        heygenVoiceId: savedHeyGen,
+        nativeVoiceId: savedNative,
         speed: typeof parsed.speed === 'number' && !isNaN(parsed.speed) ? Math.max(0.5, Math.min(2.0, parsed.speed)) : fallback.speed,
         pitch: typeof parsed.pitch === 'number' && !isNaN(parsed.pitch) ? Math.max(0.5, Math.min(2.0, parsed.pitch)) : fallback.pitch,
         accent: typeof parsed.accent === 'string' && parsed.accent.trim() ? parsed.accent.trim() : 'Default',
@@ -890,6 +1023,8 @@ export function setChatVoiceConfig(
 ): ChatVoiceConfig {
   const safePersona: PersonaId = personaId in UNIFIED_PERSONAS ? personaId : 'classy';
   const current = getChatVoiceConfig(safePersona, identity);
+  const nextProvider: SierraVoiceProvider =
+    partial.provider !== undefined ? partial.provider : current.provider;
   const nextAccent = partial.accent !== undefined ? partial.accent : current.accent;
   const nextTone = partial.tone !== undefined ? partial.tone : current.tone;
   const hasExplicitVoice = Boolean(partial.voiceId !== undefined && partial.voiceId.trim().length > 0);
@@ -900,16 +1035,39 @@ export function setChatVoiceConfig(
       ? true
       : Boolean(current.userSelectedVoice);
 
+  let nextHeyGenVoiceId =
+    partial.heygenVoiceId !== undefined
+      ? partial.heygenVoiceId.trim() || OPENROUTER_TTS_DEFAULT_VOICE
+      : current.heygenVoiceId || (isHeyGenVoiceId(current.voiceId) ? current.voiceId : OPENROUTER_TTS_DEFAULT_VOICE);
+  let nextNativeVoiceId =
+    partial.nativeVoiceId !== undefined
+      ? partial.nativeVoiceId.trim() || getDefaultLiveVoiceForPersona(safePersona, identity)
+      : current.nativeVoiceId || (!isHeyGenVoiceId(current.voiceId) ? current.voiceId : getDefaultLiveVoiceForPersona(safePersona, identity));
+
   let nextVoiceId = current.voiceId;
   if (hasExplicitVoice && partial.voiceId) {
-    nextVoiceId = partial.voiceId;
-  } else if (!nextUserSelectedVoice && (partial.accent !== undefined || partial.tone !== undefined)) {
+    nextVoiceId = partial.voiceId.trim();
+    if (nextProvider === 'openrouter' || isHeyGenVoiceId(nextVoiceId)) {
+      nextHeyGenVoiceId = nextVoiceId;
+    } else {
+      nextNativeVoiceId = nextVoiceId;
+    }
+  } else if (partial.provider !== undefined && partial.provider !== current.provider) {
+    if (nextProvider === 'openrouter') {
+      nextVoiceId = nextHeyGenVoiceId || OPENROUTER_TTS_DEFAULT_VOICE;
+    } else {
+      nextVoiceId = nextNativeVoiceId || getDefaultLiveVoiceForPersona(safePersona, identity);
+    }
+  } else if (nextProvider !== 'openrouter' && !nextUserSelectedVoice && (partial.accent !== undefined || partial.tone !== undefined)) {
     nextVoiceId = getMatchingBaseVoiceForAccentAndTone(nextAccent, nextTone, identity, safePersona);
+    nextNativeVoiceId = nextVoiceId;
   }
 
   const next: ChatVoiceConfig = {
-    provider: partial.provider !== undefined ? partial.provider : current.provider,
+    provider: nextProvider,
     voiceId: nextVoiceId,
+    heygenVoiceId: nextHeyGenVoiceId,
+    nativeVoiceId: nextNativeVoiceId,
     speed:
       partial.speed !== undefined
         ? Math.max(0.5, Math.min(2.0, partial.speed))

@@ -6895,6 +6895,7 @@ test("Echo/Barge-In Loop Prevention, Voice Label Mapping & Hardened On-Device Me
     setActiveIdentity,
     setSelectedVoiceProvider,
     setOpenRouterApiKey,
+    HEYGEN_OPENROUTER_VOICES,
   } = await import("../src/lib/persona");
 
   // Mock clean localStorage
@@ -7075,18 +7076,19 @@ test("Echo/Barge-In Loop Prevention, Voice Label Mapping & Hardened On-Device Me
   }
   assert.strictEqual(bargeInCalls, 1, "Sustained >=800ms speech with mic RMS above adaptive playback level triggers barge-in");
 
-  // 4. OpenRouter TTS Voice Mapping & Effective Label + No Native Fallback After Barge-In
-  const aoedeMapped = resolveOpenRouterTtsVoice({ requestedVoice: "Aoede", accent: "British", tone: "Warm" });
-  assert.strictEqual(aoedeMapped.effectiveVoice, "nadine");
-  assert.strictEqual(aoedeMapped.presetRemapped, true);
-  assert.strictEqual(aoedeMapped.ignoredAccentOrTone, true);
+  // 4. OpenRouter TTS Direct Voice Selection & Effective Label + No Native Fallback After Barge-In
+  assert.strictEqual(HEYGEN_OPENROUTER_VOICES[0]?.id, "nadine");
+  const directVoice = resolveOpenRouterTtsVoice({ requestedVoice: "noelle", accent: "British", tone: "Warm" });
+  assert.strictEqual(directVoice.effectiveVoice, "noelle");
+  assert.strictEqual(directVoice.presetRemapped, false);
+  assert.strictEqual(directVoice.ignoredAccentOrTone, true);
 
   const labelInfo = getEffectiveLiveVoiceLabel({
     liveProvider: "openrouter",
     ttsProvider: "openrouter",
-    requestedVoice: "Aoede",
+    requestedVoice: "noelle",
   });
-  assert.ok(labelInfo.label.includes("OpenRouter HeyGen") && labelInfo.label.includes("nadine"));
+  assert.ok(labelInfo.label.includes("OpenRouter HeyGen") && labelInfo.label.includes("noelle"));
 
   let nativeTtsFallbackCount = 0;
   const origFetch = globalThis.fetch;
