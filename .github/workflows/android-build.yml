@@ -102,6 +102,26 @@ jobs:
         with:
           packages: 'platforms;android-36 build-tools;35.0.0 platform-tools ndk;27.0.12077973 cmake;3.22.1'
 
+      - name: Setup Sierra Debug Keystore
+        run: |
+          set +e
+          mkdir -p android/app
+          KEYSTORE_OK=0
+          if [ -f android/app/sierra-debug-keystore.b64.txt ]; then
+            if tr -d '[:space:]' < android/app/sierra-debug-keystore.b64.txt | base64 -d > android/app/sierra-debug.keystore && \
+               [ -s android/app/sierra-debug.keystore ] && \
+               keytool -list -keystore android/app/sierra-debug.keystore -storepass android -alias androiddebugkey; then
+              echo "Using committed debug keystore"
+              KEYSTORE_OK=1
+            fi
+          fi
+          if [ "$KEYSTORE_OK" -ne 1 ]; then
+            echo "::warning::Committed debug keystore (android/app/sierra-debug-keystore.b64.txt) is missing, invalid, or failed verification; generating a fresh debug keystore. Updates will not install over previous builds."
+            rm -f android/app/sierra-debug.keystore
+            keytool -genkeypair -v -keystore android/app/sierra-debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
+          fi
+          exit 0
+
       - name: Make Gradle Wrapper Executable
         run: chmod +x android/gradlew
 
